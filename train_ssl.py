@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from sklearn import metrics
-from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
@@ -112,10 +111,9 @@ def _evaluate(model, loader, criterion, device, logger, desc='评估'):
     return f1, avg_loss, acc
 
 
-def _train_one_fold(model, train_loader, val_loader, args, device,
-                    fold_idx: int, run_dir: str,
-                    logger: TrainingLogger):
-    """训练一折，返回 (best_f1, best_val_preds)。"""
+def _train(model, train_loader, val_loader, args, device,
+           run_dir: str, logger: TrainingLogger):
+    """训练主循环，返回 best_f1。"""
     criterion = nn.CrossEntropyLoss()
     ema = EMA(model, decay=args.ema_decay) if args.use_ema else None
 
@@ -142,13 +140,12 @@ def _train_one_fold(model, train_loader, val_loader, args, device,
 
     ckpt_mgr = CheckpointManager(
         save_dir=run_dir,
-        prefix=f"{args.model}_fold{fold_idx}",
+        prefix=args.model,
         save_interval=args.save_interval,
         monitor='val_f1',
         logger=logger,
     )
 
-    best_val_preds = []
     start_time = time.time()
 
     for epoch in range(1, args.epochs + 1):
@@ -156,7 +153,7 @@ def _train_one_fold(model, train_loader, val_loader, args, device,
         total_loss, n_correct, n_total = 0.0, 0, 0
 
         for wav, attn, y in tqdm(train_loader,
-                                  desc=f"Fold{fold_idx} E{epoch:02d}",
+                                  desc=f"Epoch {epoch:02d}/{args.epochs}",
                                   leave=False):
             wav, attn, y = wav.to(device), attn.to(device), y.to(device)
             optimizer.zero_grad(set_to_none=True)
@@ -187,12 +184,11 @@ def _train_one_fold(model, train_loader, val_loader, args, device,
         try:
             val_f1, val_loss, val_acc = _evaluate(
                 model, val_loader, criterion, device, logger,
-                desc=f"Fold{fold_idx} E{epoch:02d} [Val]")
+                desc=f"Epoch {epoch:02d} [Val]")
         finally:
             if ema:
                 ema.restore()
 
-        # 统一日志 & TensorBoard
         epoch_metrics = {
             'loss/train': train_loss,
             'loss/val':   val_loss,
@@ -201,10 +197,8 @@ def _train_one_fold(model, train_loader, val_loader, args, device,
             'f1/val':     val_f1,
             'lr':         cur_lr,
         }
-        global_step = (fold_idx - 1) * args.epochs + epoch
-        logger.log_fold_epoch(fold_idx, epoch, epoch_metrics, global_step)
+        logger.log_epoch(epoch, epoch_metrics)
 
-        # 检查点保存
         is_best = ckpt_mgr.update(
             epoch=epoch,
             model=model,
@@ -212,33 +206,23 @@ def _train_one_fold(model, train_loader, val_loader, args, device,
             scheduler=scheduler,
             metrics={'val_f1': val_f1, 'val_acc': val_acc, 'val_loss': val_loss},
             ema=ema,
-            extra={'fold': fold_idx, 'args': vars(args)},
+            extra={'args': vars(args)},
             start_time=start_time,
         )
 
-        if is_best:
-            # 记录当前折的 OOF 预测
-            model.eval()
-            preds = []
-            with torch.no_grad(), torch.amp.autocast(
-                    device_type=device.type, enabled=device.type == 'cuda'):
-                for wav, attn, _ in val_loader:
-                    logits, _ = model(wav.to(device), attn.to(device))
-                    preds.extend(logits.argmax(1).cpu().numpy())
-            best_val_preds = preds
-
         if not is_best:
-            # best_epoch 存的是传入 update() 的 epoch 值（此处与 epoch 同为 1-indexed）
             patience_counter = epoch - ckpt_mgr.best_epoch
             if patience_counter >= args.patience:
                 logger.log(f"  早停！{args.patience} 轮内 F1 无提升")
                 break
 
+    total = time.time() - start_time
+    h, r = divmod(total, 3600); m, s = divmod(r, 60)
     logger.log(
-        f"Fold {fold_idx} 完成 | 最佳 val_f1={ckpt_mgr.best_value:.4f} "
-        f"@ epoch {ckpt_mgr.best_epoch}"
+        f"训练结束  用时 {int(h):02d}h{int(m):02d}m{int(s):02d}s | "
+        f"最佳 val_f1={ckpt_mgr.best_value:.4f} @ epoch {ckpt_mgr.best_epoch}"
     )
-    return ckpt_mgr.best_value, best_val_preds
+    return ckpt_mgr.best_value
 
 
 def train(args):
@@ -272,79 +256,51 @@ def train(args):
     feat_extractor = get_feature_extractor(args.pretrained_path)
     collate_fn = make_ssl_collate_fn(feat_extractor, target_sr=args.target_sr)
 
-    full_dataset = SSLEmotionDataset(
-        dataset_dir=args.dataset_dir,
+    train_dataset = SSLEmotionDataset(
+        dataset_dir=args.train_dir,
         target_sr=args.target_sr,
         max_sec=args.max_sec,
         training=True,
     )
-    all_labels  = full_dataset.get_labels()
+    val_dataset = SSLEmotionDataset(
+        dataset_dir=args.val_dir,
+        target_sr=args.target_sr,
+        max_sec=args.max_sec,
+        training=False,
+    )
     num_classes = len(EMOTION_LABEL_MAP)
-    logger.log(f"总样本数: {len(full_dataset)}  类别数: {num_classes}")
+    logger.log(f"训练集: {len(train_dataset)}  验证集: {len(val_dataset)}  类别数: {num_classes}")
 
-    oof_preds  = np.zeros(len(full_dataset), dtype=int)
-    oof_labels = all_labels.copy()
-    skf = StratifiedKFold(n_splits=args.n_folds, shuffle=True,
-                          random_state=args.seed)
-    fold_f1_list = []
-    logger.log(f"===== {args.n_folds}-Fold 训练开始 =====")
+    train_loader = DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=True,
+        num_workers=args.num_workers, drop_last=True,
+        collate_fn=collate_fn, worker_init_fn=worker_init_fn)
+    val_loader = DataLoader(
+        val_dataset, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_fn, worker_init_fn=worker_init_fn)
 
-    for fold, (tr_idx, va_idx) in enumerate(
-            skf.split(np.zeros(len(all_labels)), all_labels), 1):
-        logger.log(
-            f"\n=== Fold {fold}/{args.n_folds} | "
-            f"train {len(tr_idx)} | val {len(va_idx)} ==="
-        )
+    model = get_model(
+        num_classes=num_classes,
+        pretrained_path=args.pretrained_path,
+        pool=args.pool,
+        freeze_feature_extractor=args.freeze_feature_extractor,
+        dropout=args.dropout,
+    ).to(device)
 
-        tr_ds = Subset(full_dataset, tr_idx)
-        va_ds = Subset(full_dataset, va_idx)
-        va_ds.dataset.training = False
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_p   = sum(p.numel() for p in model.parameters())
+    logger.log(f"参数: 可训练 {trainable:,} / 总计 {total_p:,}")
 
-        train_loader = DataLoader(
-            tr_ds, batch_size=args.batch_size, shuffle=True,
-            num_workers=args.num_workers, drop_last=True,
-            collate_fn=collate_fn, worker_init_fn=worker_init_fn)
-        val_loader = DataLoader(
-            va_ds, batch_size=args.batch_size, shuffle=False,
-            num_workers=args.num_workers,
-            collate_fn=collate_fn, worker_init_fn=worker_init_fn)
-
-        model = get_model(
-            num_classes=num_classes,
-            pretrained_path=args.pretrained_path,
-            pool=args.pool,
-            freeze_feature_extractor=args.freeze_feature_extractor,
-            dropout=args.dropout,
-        ).to(device)
-
-        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total_p   = sum(p.numel() for p in model.parameters())
-        logger.log(f"参数: 可训练 {trainable:,} / 总计 {total_p:,}")
-
-        best_f1, val_preds = _train_one_fold(
-            model, train_loader, val_loader, args,
-            device, fold, run_dir, logger)
-
-        fold_f1_list.append(best_f1)
-        oof_preds[va_idx] = val_preds
-
-    # OOF 汇总
-    oof_f1  = metrics.f1_score(oof_labels, oof_preds, average='macro')
-    oof_acc = metrics.accuracy_score(oof_labels, oof_preds)
-    logger.log(f"\n===== {args.n_folds}-Fold OOF 完成 =====")
-    logger.log(f"各折 F1: {[f'{f:.4f}' for f in fold_f1_list]}")
-    logger.log(f"OOF 宏F1: {oof_f1:.4f}  OOF Acc: {oof_acc:.4f}")
-
-    logger.log_scalar('OOF/F1_macro', oof_f1, 0)
-    logger.log_scalar('OOF/Accuracy', oof_acc, 0)
+    best_f1 = _train(model, train_loader, val_loader, args, device, run_dir, logger)
 
     # 超参数面板
     hparams = {k: getattr(args, k) for k in [
         'model', 'pool', 'batch_size', 'lr_encoder', 'lr_head',
-        'weight_decay', 'epochs', 'n_folds', 'dropout',
+        'weight_decay', 'epochs', 'dropout',
         'freeze_feature_extractor', 'use_ema', 'ema_decay',
     ]}
-    logger.log_hparams(hparams, {'hparam/oof_f1': oof_f1, 'hparam/oof_acc': oof_acc})
+    logger.log_hparams(hparams, {'hparam/best_f1': best_f1})
     logger.close()
 
 
@@ -363,12 +319,12 @@ if __name__ == '__main__':
     parser.add_argument('--save_interval', type=int, default=5,
                         help='每 N 轮保存一次完整周期检查点，<=0 禁用')
 
-    parser.add_argument('--dataset_dir', type=str, default='datasets/emotion/train')
+    parser.add_argument('--train_dir', type=str, default='datasets/emotion/train')
+    parser.add_argument('--val_dir', type=str, default='datasets/emotion/val')
     parser.add_argument('--target_sr', type=int, default=SSL_SR)
     parser.add_argument('--max_sec', type=float, default=3.0)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--num_workers', type=int, default=4)
-    parser.add_argument('--n_folds', type=int, default=5)
 
     parser.add_argument('--pool', type=str, default='attn',
                         choices=['attn', 'mean', 'stat'])

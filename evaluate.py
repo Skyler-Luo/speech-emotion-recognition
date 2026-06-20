@@ -20,7 +20,7 @@ def main(args):
     print(f"设备: {device}")
 
     dataset = EmotionDataset(
-        dataset_dir=args.dataset_dir,
+        dataset_dir=args.data_dir,
         feature_type=args.feature_type,
         max_length=args.max_length,
         n_mels=args.n_mels,
@@ -50,7 +50,7 @@ def main(args):
         from datetime import datetime
         out = {
             'model_weights':     args.weights,
-            'dataset_dir':       args.dataset_dir,
+            'data_dir':          args.data_dir,
             'accuracy':          float(result['accuracy']),
             'f1_macro':          float(result['f1_macro']),
             'precision_macro':   float(result['precision_macro']),
@@ -73,14 +73,14 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='情感分类模型评估')
     parser.add_argument('--weights', type=str, required=True)
-    parser.add_argument('--dataset_dir', type=str, required=True)
+    parser.add_argument('--data_dir', type=str, default='datasets/emotion/val')
     parser.add_argument('--feature_type', type=str, default='mel_spectrogram')
     parser.add_argument('--n_mels', type=int, default=128)
     parser.add_argument('--hop_length', type=int, default=320)
     parser.add_argument('--max_length', type=int, default=3 * 32000)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--num_workers', type=int, default=4)
-    parser.add_argument('--cuda', action='store_true', default=False)
+    parser.add_argument('--cuda', action='store_true', default=True)
     parser.add_argument('--no_cuda', dest='cuda', action='store_false')
     parser.add_argument('--gpu_id', type=int, default=0)
     parser.add_argument('--save_results', action='store_true', default=False)

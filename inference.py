@@ -11,7 +11,7 @@ from utils.audio_utils import preprocess_waveform
 from utils.model_utils import build_model_from_checkpoint, get_logits
 
 
-DEFAULT_MODEL_PATH = 'checkpoints/EmotionClassification/dymn20_as_weights_best.pt'
+DEFAULT_MODEL_PATH = 'runs/EmotionClassification/dymn20_as_weights_best.pt'
 
 
 _model = None

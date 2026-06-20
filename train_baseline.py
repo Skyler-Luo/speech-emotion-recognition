@@ -9,9 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn import metrics
-from sklearn.model_selection import train_test_split, StratifiedKFold
 from torch.optim.lr_scheduler import _LRScheduler
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from utils.config import EMOTION_LABEL_MAP, NUM_CLASSES, DEFAULT_SR
@@ -178,8 +177,8 @@ def train(args):
         logger.log("使用 CPU")
 
     # 数据集
-    train_full = BaselineEmotionDataset(
-        dataset_dir=args.dataset_dir,
+    train_dataset = BaselineEmotionDataset(
+        dataset_dir=args.train_dir,
         sample_rate=args.sample_rate,
         max_length=args.max_length,
         n_mfcc=args.n_mfcc,
@@ -190,8 +189,8 @@ def train(args):
         normalize=True,
         random_offset=True,
     )
-    val_full = BaselineEmotionDataset(
-        dataset_dir=args.dataset_dir,
+    val_dataset = BaselineEmotionDataset(
+        dataset_dir=args.val_dir,
         sample_rate=args.sample_rate,
         max_length=args.max_length,
         n_mfcc=args.n_mfcc,
@@ -202,29 +201,15 @@ def train(args):
         normalize=True,
         random_offset=False,
     )
-
-    # 数据划分
-    all_labels = train_full.get_labels()
-    if args.cross_validation:
-        skf = StratifiedKFold(n_splits=args.n_folds, shuffle=True,
-                               random_state=args.seed)
-        tr_idx, va_idx = list(
-            skf.split(np.zeros(len(all_labels)), all_labels)
-        )[args.current_fold]
-    else:
-        tr_idx, va_idx = train_test_split(
-            np.arange(len(train_full)), test_size=args.val_ratio,
-            random_state=args.seed, stratify=all_labels)
-
     train_loader = DataLoader(
-        Subset(train_full, tr_idx),
+        train_dataset,
         batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, worker_init_fn=worker_init_fn)
     val_loader = DataLoader(
-        Subset(val_full, va_idx),
+        val_dataset,
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.num_workers, worker_init_fn=worker_init_fn)
-    logger.log(f"训练集: {len(tr_idx)}  验证集: {len(va_idx)}")
+    logger.log(f"训练集: {len(train_dataset)}  验证集: {len(val_dataset)}")
 
     # 模型
     model = get_model(
@@ -406,11 +391,8 @@ if __name__ == '__main__':
     parser.add_argument('--save_interval', type=int, default=10)
 
     # 数据
-    parser.add_argument('--dataset_dir', type=str, default='datasets/emotion/train')
-    parser.add_argument('--val_ratio', type=float, default=0.2)
-    parser.add_argument('--cross_validation', action='store_true', default=False)
-    parser.add_argument('--n_folds', type=int, default=5)
-    parser.add_argument('--current_fold', type=int, default=0)
+    parser.add_argument('--train_dir', type=str, default='datasets/emotion/train')
+    parser.add_argument('--val_dir', type=str, default='datasets/emotion/val')
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_workers', type=int, default=4)
 

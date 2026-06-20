@@ -8,9 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn import metrics
-from sklearn.model_selection import StratifiedKFold, train_test_split
 from torch.optim.lr_scheduler import _LRScheduler
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import argparse
 
@@ -178,8 +177,8 @@ def train(args):
 
     # 数据集
     need_waveform = args.augment or args.use_smote
-    train_full = EmotionDataset(
-        dataset_dir=args.dataset_dir,
+    train_dataset = EmotionDataset(
+        dataset_dir=args.train_dir,
         feature_type=args.feature_type,
         max_length=args.max_length,
         n_mels=args.n_mels,
@@ -189,8 +188,8 @@ def train(args):
         return_waveform=need_waveform,
         augmenter=augmenter if need_waveform else None,
     )
-    val_full = EmotionDataset(
-        dataset_dir=args.dataset_dir,
+    val_dataset = EmotionDataset(
+        dataset_dir=args.val_dir,
         feature_type=args.feature_type,
         max_length=args.max_length,
         n_mels=args.n_mels,
@@ -200,23 +199,7 @@ def train(args):
         return_waveform=False,
         augmenter=None,
     )
-
-    # 数据划分
-    all_labels = train_full.get_labels()
-    if args.cross_validation:
-        skf = StratifiedKFold(n_splits=args.n_folds, shuffle=True,
-                               random_state=args.seed)
-        tr_idx, va_idx = list(
-            skf.split(np.zeros(len(all_labels)), all_labels)
-        )[args.current_fold]
-    else:
-        tr_idx, va_idx = train_test_split(
-            np.arange(len(train_full)), test_size=args.val_ratio,
-            random_state=args.seed, stratify=all_labels)
-
-    train_dataset = Subset(train_full, tr_idx)
-    val_dataset   = Subset(val_full,   va_idx)
-    train_loader  = DataLoader(
+    train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, worker_init_fn=worker_init_fn)
     val_loader = DataLoader(
@@ -309,7 +292,7 @@ def train(args):
                 ya = yb = y; lam = 1.0
 
             # 波形 → 频谱图
-            x = _prepare_input(x, args, train_full)
+            x = _prepare_input(x, args, train_dataset)
 
             # SpecAugment（频谱域）
             if args.augment and augmenter is not None:
@@ -348,7 +331,7 @@ def train(args):
             ema.apply_shadow()
         try:
             val_f1, val_loss, val_acc = _quick_eval(
-                model, val_loader, criterion, device, args, val_full, logger)
+                model, val_loader, criterion, device, args, val_dataset, logger)
         finally:
             if ema:
                 ema.restore()
@@ -397,7 +380,7 @@ def train(args):
         if ema:
             ema.apply_shadow()
         try:
-            prepare_fn = lambda x: _prepare_input(x, args, val_full)
+            prepare_fn = lambda x: _prepare_input(x, args, val_dataset)
             final_f1, detailed = evaluate_per_class(
                 model, val_loader, criterion, device,
                 prepare_input_fn=prepare_fn, verbose=True)
@@ -466,11 +449,8 @@ if __name__ == '__main__':
     parser.add_argument('--save_interval', type=int, default=10)
 
     # 数据
-    parser.add_argument('--dataset_dir', type=str, default='datasets/emotion/train')
-    parser.add_argument('--val_ratio', type=float, default=0.2)
-    parser.add_argument('--cross_validation', action='store_true', default=False)
-    parser.add_argument('--n_folds', type=int, default=5)
-    parser.add_argument('--current_fold', type=int, default=0)
+    parser.add_argument('--train_dir', type=str, default='datasets/emotion/train')
+    parser.add_argument('--val_dir', type=str, default='datasets/emotion/val')
 
     # 模型
     parser.add_argument('--model_name', type=str, default='dymn20_as',

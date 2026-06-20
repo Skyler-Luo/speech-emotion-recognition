@@ -1,7 +1,3 @@
-# utils/dataset.py
-# EmotionDataset：负责文件扫描、音频加载、特征提取
-# 不含任何增强逻辑；增强由外部 augmenter 注入
-
 import os
 from collections import Counter
 from typing import Dict, List, Literal, Optional, Tuple, Union
@@ -38,8 +34,6 @@ def collect_wav_files(root_dir: str) -> Tuple[List[str], List[int], List[str]]:
                 emotion_list.append(emotion)
     return file_list, labels, emotion_list
 
-
-# 数据集
 
 class EmotionDataset(Dataset):
     """语音情感识别数据集。

@@ -8,20 +8,7 @@ from typing import Dict, Tuple
 from utils.config import EMOTION_LABEL_MAP
 
 class EMA:
-    """指数移动平均，推理时使用更平滑的模型权重。
-
-    用法::
-
-        ema = EMA(model, decay=0.999)
-        # 训练每步：
-        ema.update()
-        # 验证时：
-        ema.apply_shadow()
-        try:
-            validate(model, ...)
-        finally:
-            ema.restore()
-    """
+    """指数移动平均，推理时使用更平滑的模型权重。"""
 
     def __init__(self, model: nn.Module, decay: float = 0.999):
         self.model = model
@@ -59,8 +46,6 @@ class EMA:
         self.shadow = sd['shadow']
         self.backup = sd['backup']
 
-
-# 检查点
 
 def load_state_from_checkpoint(ckpt: dict, model: nn.Module,
                                 prefer_ema: bool = True) -> str:
@@ -131,8 +116,6 @@ def build_model_from_checkpoint(checkpoint_path: str, device,
     return model.to(device).eval(), used_key
 
 
-# 输入整形
-
 def reshape_input(x: torch.Tensor) -> torch.Tensor:
     """将各种维度的输入统一整形为 [B, C, H, W]（频谱图格式）。
 
@@ -149,8 +132,6 @@ def reshape_input(x: torch.Tensor) -> torch.Tensor:
         return x.unsqueeze(1) if x.shape[0] > x.shape[1] else x
     raise ValueError(f"reshape_input: 不支持的维度 {x.shape}")
 
-
-# 批量特征提取
 
 def batch_extract_features(waveforms: torch.Tensor, dataset) -> torch.Tensor:
     """批量从波形提取特征，优先调用 dataset.extract_features_batch。
@@ -169,8 +150,6 @@ def batch_extract_features(waveforms: torch.Tensor, dataset) -> torch.Tensor:
         )
 
 
-
-# 评估工具（train.py 和 evaluate.py 统一使用）
 def get_logits(outputs):
     """从模型输出中提取 logits（兼容 tuple 和直接 tensor 两种格式）。"""
     return outputs[0] if isinstance(outputs, tuple) else outputs
