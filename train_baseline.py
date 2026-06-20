@@ -147,14 +147,13 @@ def _quick_eval(model, loader, criterion, device, logger):
 
 
 def train(args):
-    save_dir = os.path.join(args.save_dir, args.experiment_name)
+    run_dir = os.path.join(args.run_dir, args.experiment_name)
     logger = TrainingLogger(
-        log_dir=args.log_dir,
-        save_dir=save_dir,
+        run_dir=run_dir,
         experiment_name=args.experiment_name,
     )
     ckpt_mgr = CheckpointManager(
-        save_dir=save_dir,
+        save_dir=run_dir,
         prefix='ser_baseline',
         save_interval=args.save_interval,
         monitor='val_f1',
@@ -403,8 +402,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_cuda', dest='cuda', action='store_false')
     parser.add_argument('--gpu_id', type=int, default=0)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--log_dir', type=str, default='runs')
-    parser.add_argument('--save_dir', type=str, default='checkpoints')
+    parser.add_argument('--run_dir', type=str, default='runs')
     parser.add_argument('--save_interval', type=int, default=10)
 
     # 数据

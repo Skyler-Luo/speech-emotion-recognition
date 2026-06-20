@@ -216,7 +216,7 @@ class InvertedResidual(nn.Module):
 
 
 model_url = "https://github.com/fschmid56/EfficientAT/releases/download/v0.0.1/"
-model_dir = "resources"
+model_dir = "weights"
 
 pretrained_models = {
     "mn10_im_pytorch": urllib.parse.urljoin(model_url, "mn10_im_pytorch.pt"),

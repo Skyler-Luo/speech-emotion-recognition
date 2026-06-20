@@ -1,7 +1,10 @@
 """HuBERT Speech Emotion Recognition. Requires: pip install transformers"""
 
+import os
 import torch
 import torch.nn as nn
+
+os.environ.setdefault('HF_HOME', 'weights/huggingface')
 
 try:
     from transformers import HubertModel, AutoFeatureExtractor

@@ -11,33 +11,34 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class TrainingLogger:
-    """将训练日志同时写入控制台、.log 文件和 TensorBoard。"""
+    """将训练日志同时写入控制台、.log 文件和 TensorBoard。
+
+    所有输出统一放在 runs/{experiment_name}/ 目录下：
+      - train_时间戳.log      ← 文本日志
+      - tensorboard/          ← TensorBoard 事件文件
+    """
 
     def __init__(
         self,
-        log_dir: str,
-        save_dir: str,
+        run_dir: str,
         experiment_name: str,
         tb_suffix: str = "",
     ):
-        os.makedirs(save_dir, exist_ok=True)
-        os.makedirs(log_dir, exist_ok=True)
-
-        self.save_dir = save_dir
+        self.run_dir = run_dir
         self.experiment_name = experiment_name
+        os.makedirs(run_dir, exist_ok=True)
 
         # .log 文件
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.log_path = os.path.join(save_dir, f"train_{ts}.log")
+        self.log_path = os.path.join(run_dir, f"train_{ts}.log")
 
         # TensorBoard
-        tb_name = f"{experiment_name}_{ts}"
-        if tb_suffix:
-            tb_name += f"_{tb_suffix}"
-        self.tb_dir = os.path.join(log_dir, tb_name)
+        tb_name = "tensorboard" if not tb_suffix else f"tensorboard_{tb_suffix}"
+        self.tb_dir = os.path.join(run_dir, tb_name)
         self.writer = SummaryWriter(log_dir=self.tb_dir)
 
         self.log(f"实验: {experiment_name}")
+        self.log(f"输出目录: {run_dir}")
         self.log(f"日志文件: {self.log_path}")
         self.log(f"TensorBoard: {self.tb_dir}")
 

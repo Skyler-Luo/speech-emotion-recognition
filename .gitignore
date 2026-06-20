@@ -219,3 +219,9 @@ __marimo__/
 
 # Dataset
 datasets/emotion
+
+# Output
+runs
+
+# Pretrained models
+weights

@@ -1,9 +1,13 @@
 """EfficientNet-based SER model with single-channel Log-Mel input."""
 
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio.transforms as T
+
+os.environ.setdefault('TORCH_HOME', 'weights')
+
 from torchvision.models import (
     efficientnet_b0, EfficientNet_B0_Weights,
     efficientnet_b5, EfficientNet_B5_Weights,

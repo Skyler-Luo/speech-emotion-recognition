@@ -1,7 +1,10 @@
 """Wav2Vec2 Speech Emotion Recognition."""
 
+import os
 import torch
 import torch.nn as nn
+
+os.environ.setdefault('HF_HOME', 'weights/huggingface')
 
 try:
     from transformers import Wav2Vec2Model, AutoFeatureExtractor

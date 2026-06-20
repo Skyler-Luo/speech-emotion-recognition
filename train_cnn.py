@@ -140,14 +140,13 @@ def _build_model(args):
 
 
 def train(args):
-    save_dir = os.path.join(args.save_dir, args.experiment_name)
+    run_dir = os.path.join(args.run_dir, args.experiment_name)
     logger = TrainingLogger(
-        log_dir=args.log_dir,
-        save_dir=save_dir,
+        run_dir=run_dir,
         experiment_name=args.experiment_name,
     )
     ckpt_mgr = CheckpointManager(
-        save_dir=save_dir,
+        save_dir=run_dir,
         prefix=args.model_name,
         save_interval=args.save_interval,
         monitor='val_f1',
@@ -463,8 +462,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--num_workers', type=int, default=8)
-    parser.add_argument('--log_dir', type=str, default='runs')
-    parser.add_argument('--save_dir', type=str, default='checkpoints')
+    parser.add_argument('--run_dir', type=str, default='runs')
     parser.add_argument('--save_interval', type=int, default=10)
 
     # 数据
@@ -486,7 +484,7 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=float, default=0.3)
 
     # 训练
-    parser.add_argument('--epochs', type=int, default=180)
+    parser.add_argument('--epochs', type=int, default=120)
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--weight_decay', type=float, default=1e-3)
     parser.add_argument('--patience', type=int, default=15)
