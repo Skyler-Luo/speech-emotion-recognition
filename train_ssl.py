@@ -294,7 +294,6 @@ def train(args):
 
     best_f1 = _train(model, train_loader, val_loader, args, device, run_dir, logger)
 
-    # 超参数面板
     hparams = {k: getattr(args, k) for k in [
         'model', 'pool', 'batch_size', 'lr_encoder', 'lr_head',
         'weight_decay', 'epochs', 'dropout',
