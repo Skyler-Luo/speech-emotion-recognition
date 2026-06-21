@@ -49,13 +49,13 @@ def main(args):
     if args.save_results:
         from datetime import datetime
         out = {
-            'model_weights':     args.weights,
-            'data_dir':          args.data_dir,
-            'accuracy':          float(result['accuracy']),
-            'f1_macro':          float(result['f1_macro']),
-            'precision_macro':   float(result['precision_macro']),
-            'recall_macro':      float(result['recall_macro']),
-            'loss':              float(result['loss']),
+            'model_weights': args.weights,
+            'data_dir': args.data_dir,
+            'accuracy': float(result['accuracy']),
+            'f1_macro': float(result['f1_macro']),
+            'precision_macro': float(result['precision_macro']),
+            'recall_macro': float(result['recall_macro']),
+            'loss': float(result['loss']),
             'class_metrics': {
                 k: {m: float(v) for m, v in v_dict.items() if m != 'samples'}
                 for k, v_dict in result['class_metrics'].items()

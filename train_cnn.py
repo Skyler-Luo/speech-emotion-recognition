@@ -93,7 +93,7 @@ def _quick_eval(model, loader, criterion, device, args, dataset, logger):
         prepare_input_fn=prepare_fn, desc='验证'
     )
     acc = metrics.accuracy_score(targets, preds)
-    f1  = metrics.f1_score(targets, preds, average='macro')
+    f1 = metrics.f1_score(targets, preds, average='macro')
     logger.log(f"  验证 → 准确率: {acc*100:.2f}%  宏F1: {f1*100:.2f}%  Loss: {avg_loss:.4f}")
     for emotion, idx in EMOTION_LABEL_MAP.items():
         mask = targets == idx
@@ -321,7 +321,7 @@ def train(args):
             if ema:
                 ema.update()
 
-        train_acc  = train_correct / train_total if train_total else 0
+        train_acc = train_correct / train_total if train_total else 0
         train_loss = float(np.mean(train_loss_list))
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
@@ -338,11 +338,11 @@ def train(args):
 
         epoch_metrics = {
             'loss/train': train_loss,
-            'loss/val':   val_loss,
-            'acc/train':  train_acc,
-            'acc/val':    val_acc,
-            'f1/val':     val_f1,
-            'lr':         current_lr,
+            'loss/val': val_loss,
+            'acc/train': train_acc,
+            'acc/val': val_acc,
+            'f1/val': val_f1,
+            'lr': current_lr,
         }
         logger.log_epoch(epoch + 1, epoch_metrics)
         logger.log(f"  耗时: {time.time()-t0:.1f}s")

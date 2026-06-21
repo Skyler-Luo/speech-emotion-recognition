@@ -15,8 +15,6 @@ from utils.config import (
 )
 
 
-# 文件扫描工具
-
 def collect_wav_files(root_dir: str) -> Tuple[List[str], List[int], List[str]]:
     """扫描 root_dir/{emotion}/*.wav，返回 (file_list, labels, emotion_list)。
 
@@ -76,19 +74,16 @@ class EmotionDataset(Dataset):
                  return_waveform: bool = False,
                  augmenter=None):
 
-        self.dataset_dir   = dataset_dir
-        self.target_sr     = target_sr
-        self.max_length    = max_length
-        self.feature_type  = feature_type
-        self.normalize     = normalize
+        self.dataset_dir = dataset_dir
+        self.target_sr = target_sr
+        self.max_length = max_length
+        self.feature_type = feature_type
+        self.normalize = normalize
         self.random_offset = random_offset
         self.return_waveform = return_waveform
-        self.augmenter     = augmenter
-
-        # Resampler 缓存（单进程复用）
+        self.augmenter = augmenter
         self._resamplers: Dict[Tuple[int, int], T.Resample] = {}
 
-        # 特征提取器（绑定到 CPU，使用时移到目标设备）
         self.mel_transform = T.MelSpectrogram(
             sample_rate=target_sr, n_fft=n_fft, hop_length=hop_length,
             n_mels=n_mels, f_min=DEFAULT_F_MIN, f_max=target_sr // 2,
@@ -101,7 +96,6 @@ class EmotionDataset(Dataset):
             },
         )
 
-        # 扫描文件
         self.file_list, labels, self.emotion_list = collect_wav_files(dataset_dir)
         if not self.file_list:
             raise FileNotFoundError(f"在 {dataset_dir} 下未找到任何 WAV 文件")
@@ -116,15 +110,11 @@ class EmotionDataset(Dataset):
         for emotion, n in sorted(counts.items()):
             print(f"  {emotion}: {n}")
 
-    # 公共属性
-
     def __len__(self) -> int:
         return len(self.file_list)
 
     def get_labels(self) -> np.ndarray:
         return self.labels
-
-    # 核心逻辑
 
     def _load_waveform(self, idx: int) -> Tuple[torch.Tensor, int]:
         """加载并预处理第 idx 条音频，返回 (waveform [1, T], label)。"""
@@ -146,7 +136,7 @@ class EmotionDataset(Dataset):
         特征提取器自动跟随 waveform 的设备。
         """
         device = waveform.device
-        self.mel_transform  = self.mel_transform.to(device)
+        self.mel_transform = self.mel_transform.to(device)
         self.mfcc_transform = self.mfcc_transform.to(device)
 
         if self.feature_type == 'mfcc':
@@ -155,10 +145,9 @@ class EmotionDataset(Dataset):
         if self.feature_type == 'multi':
             return {
                 'mel_spectrogram': torch.log(self.mel_transform(waveform) + 1e-9),
-                'mfcc':            self.mfcc_transform(waveform),
+                'mfcc': self.mfcc_transform(waveform),
             }
 
-        # 默认 mel_spectrogram
         return torch.log(self.mel_transform(waveform) + 1e-9)
 
     def extract_features_batch(self, waveforms: torch.Tensor) -> torch.Tensor:
@@ -174,10 +163,8 @@ class EmotionDataset(Dataset):
         if self.return_waveform:
             return waveform, label
 
-        # 增强（波形域）
         if self.augmenter is not None:
             waveform = self.augmenter.apply_wave_augmentations(waveform)
-            # 增强后可能改变长度，需要对齐
             waveform = pad_or_trim(waveform, self.max_length)
 
         return self.extract_features(waveform), label

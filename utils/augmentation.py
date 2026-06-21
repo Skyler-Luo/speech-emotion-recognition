@@ -332,17 +332,16 @@ class AudioAugmentation:
         return waveforms
 
 
-# 增强强度配置
 def configure_augmentation(augmenter: AudioAugmentation, intensity: str):
     """根据强度（'light' | 'medium' | 'heavy'）重新绑定各方法参数。"""
     configs = {
-        'light':  dict(time_shift=dict(shift_limit=0.2),
-                       add_noise=dict(noise_factor_range=(0.001, 0.01)),
-                       time_stretch=dict(rate_range=(0.85, 1.15)),
-                       pitch_shift=dict(n_steps_range=(-2, 2)),
-                       adjust_volume=dict(gain_db_range=(-3, 3)),
-                       spec_augment=dict(freq_mask_param=10, time_mask_param=10, num_masks=2),
-                       spec_prob=0.4),
+        'light': dict(time_shift=dict(shift_limit=0.2),
+                      add_noise=dict(noise_factor_range=(0.001, 0.01)),
+                      time_stretch=dict(rate_range=(0.85, 1.15)),
+                      pitch_shift=dict(n_steps_range=(-2, 2)),
+                      adjust_volume=dict(gain_db_range=(-3, 3)),
+                      spec_augment=dict(freq_mask_param=10, time_mask_param=10, num_masks=2),
+                      spec_prob=0.4),
         'medium': dict(time_shift=dict(shift_limit=0.3),
                        add_noise=dict(noise_factor_range=(0.001, 0.02)),
                        time_stretch=dict(rate_range=(0.75, 1.25)),
@@ -350,40 +349,40 @@ def configure_augmentation(augmenter: AudioAugmentation, intensity: str):
                        adjust_volume=dict(gain_db_range=(-6, 6)),
                        spec_augment=dict(freq_mask_param=20, time_mask_param=20, num_masks=3),
                        spec_prob=0.5),
-        'heavy':  dict(time_shift=dict(shift_limit=0.4),
-                       add_noise=dict(noise_factor_range=(0.002, 0.03)),
-                       time_stretch=dict(rate_range=(0.7, 1.3)),
-                       pitch_shift=dict(n_steps_range=(-4, 4)),
-                       adjust_volume=dict(gain_db_range=(-8, 8)),
-                       spec_augment=dict(freq_mask_param=30, time_mask_param=30, num_masks=4),
-                       spec_prob=0.6),
+        'heavy': dict(time_shift=dict(shift_limit=0.4),
+                      add_noise=dict(noise_factor_range=(0.002, 0.03)),
+                      time_stretch=dict(rate_range=(0.7, 1.3)),
+                      pitch_shift=dict(n_steps_range=(-4, 4)),
+                      adjust_volume=dict(gain_db_range=(-8, 8)),
+                      spec_augment=dict(freq_mask_param=30, time_mask_param=30, num_masks=4),
+                      spec_prob=0.6),
     }
     cfg = configs.get(intensity, configs['medium'])
-    cls = AudioAugmentation
 
-    def make_wrapper(method_name, kw):
-        unbound = getattr(cls, method_name)
-        def wrapper(w, _aug=augmenter, _fn=unbound, _kw=kw):
-            return _fn(_aug, w, **_kw)
-        return wrapper
+    import functools
+    augmenter.time_shift = functools.partial(AudioAugmentation.time_shift, augmenter, **cfg['time_shift'])
+    augmenter.add_noise = functools.partial(AudioAugmentation.add_noise, augmenter, **cfg['add_noise'])
+    augmenter.time_stretch = functools.partial(AudioAugmentation.time_stretch, augmenter, **cfg['time_stretch'])
+    augmenter.pitch_shift = functools.partial(AudioAugmentation.pitch_shift, augmenter, **cfg['pitch_shift'])
+    augmenter.adjust_volume = functools.partial(AudioAugmentation.adjust_volume, augmenter, **cfg['adjust_volume'])
+    augmenter.spec_augment = functools.partial(AudioAugmentation.spec_augment, augmenter, **cfg['spec_augment'])
 
-    augmenter.time_shift    = make_wrapper('time_shift',    cfg['time_shift'])
-    augmenter.add_noise     = make_wrapper('add_noise',     cfg['add_noise'])
-    augmenter.time_stretch  = make_wrapper('time_stretch',  cfg['time_stretch'])
-    augmenter.pitch_shift   = make_wrapper('pitch_shift',   cfg['pitch_shift'])
-    augmenter.adjust_volume = make_wrapper('adjust_volume', cfg['adjust_volume'])
-    augmenter.spec_augment  = make_wrapper('spec_augment',  cfg['spec_augment'])
+    augmenter._spec_prob = cfg['spec_prob']
+    augmenter.apply_spec_augmentations = functools.partial(
+        _apply_spec_augmentations_with_prob, augmenter)
 
-    spec_prob = cfg['spec_prob']
-    def _spec_aug_with_prob(specs):
-        mask = torch.rand(specs.shape[0], device=specs.device) < spec_prob
-        for i in range(specs.shape[0]):
-            if mask[i]:
-                specs[i] = augmenter.spec_augment(specs[i])
-        return specs
-    augmenter.apply_spec_augmentations = _spec_aug_with_prob
+    print(f"[augmentation] 已配置 {intensity} 强度，spec 增强概率: {cfg['spec_prob']:.2f}")
 
-    print(f"[augmentation] 已配置 {intensity} 强度，spec 增强概率: {spec_prob:.2f}")
+
+def _apply_spec_augmentations_with_prob(augmenter: 'AudioAugmentation',
+                                        specs: torch.Tensor) -> torch.Tensor:
+    """模块级函数，可被 pickle，替代 configure_augmentation 内的局部闭包。"""
+    prob = getattr(augmenter, '_spec_prob', 0.5)
+    mask = torch.rand(specs.shape[0], device=specs.device) < prob
+    for i in range(specs.shape[0]):
+        if mask[i]:
+            specs[i] = augmenter.spec_augment(specs[i])
+    return specs
 
 
 class AudioSMOTE:

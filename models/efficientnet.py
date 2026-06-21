@@ -127,7 +127,7 @@ class EfficientNetSER(nn.Module):
         self.last_ch = last_ch
 
     def forward(self, x: torch.Tensor):
-        feat = self.backbone.features(x)               # [B, last_ch, H', W']
+        feat = self.backbone.features(x)                # [B, last_ch, H', W']
         embed = self.backbone.avgpool(feat).flatten(1)  # [B, last_ch]
         logits = self.backbone.classifier(embed)        # [B, num_classes]
         return logits, embed

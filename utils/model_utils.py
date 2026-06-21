@@ -42,7 +42,7 @@ class EMA:
         return {'decay': self.decay, 'shadow': self.shadow, 'backup': self.backup}
 
     def load_state_dict(self, sd: dict):
-        self.decay  = sd['decay']
+        self.decay = sd['decay']
         self.shadow = sd['shadow']
         self.backup = sd['backup']
 
@@ -215,12 +215,12 @@ def evaluate_per_class(model: nn.Module, loader, criterion, device,
     )
     class_metrics: Dict = {
         emotion: {
-            'accuracy':  float(((preds == targets) & (targets == idx)).sum()
-                               / max((targets == idx).sum(), 1)),
+            'accuracy': float(((preds == targets) & (targets == idx)).sum()
+                              / max((targets == idx).sum(), 1)),
             'precision': float(report[emotion]['precision']),
-            'recall':    float(report[emotion]['recall']),
-            'f1':        float(report[emotion]['f1-score']),
-            'samples':   int(report[emotion]['support']),
+            'recall': float(report[emotion]['recall']),
+            'f1': float(report[emotion]['f1-score']),
+            'samples': int(report[emotion]['support']),
         }
         for emotion, idx in EMOTION_LABEL_MAP.items()
         if (targets == idx).sum() > 0
@@ -243,11 +243,11 @@ def evaluate_per_class(model: nn.Module, loader, criterion, device,
             print(row)
 
     return f1, {
-        'accuracy':         acc,
-        'loss':             avg_loss,
-        'precision_macro':  prec,
-        'recall_macro':     rec,
-        'f1_macro':         f1,
+        'accuracy': acc,
+        'loss': avg_loss,
+        'precision_macro': prec,
+        'recall_macro': rec,
+        'f1_macro': f1,
         'confusion_matrix': cm.tolist(),
-        'class_metrics':    class_metrics,
+        'class_metrics': class_metrics,
     }

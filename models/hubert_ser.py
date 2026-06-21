@@ -25,8 +25,8 @@ class AttentivePool(nn.Module):
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
         a = self.fc2(torch.tanh(self.fc1(h))).squeeze(-1)  # [B, T]
-        a = torch.softmax(a, dim=1).unsqueeze(-1)           # [B, T, 1]
-        return (h * a).sum(dim=1)                           # [B, C]
+        a = torch.softmax(a, dim=1).unsqueeze(-1)  # [B, T, 1]
+        return (h * a).sum(dim=1)  # [B, C]
 
 
 class MeanPool(nn.Module):

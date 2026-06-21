@@ -66,11 +66,11 @@ class TrainingLogger:
         # 控制台摘要：只打印"易读"的核心指标
         _fmt = {
             "loss/train": "TrainLoss",
-            "loss/val":   "ValLoss",
-            "acc/train":  "TrainAcc",
-            "acc/val":    "ValAcc",
-            "f1/val":     "ValF1",
-            "lr":         "LR",
+            "loss/val": "ValLoss",
+            "acc/train": "TrainAcc",
+            "acc/val": "ValAcc",
+            "f1/val": "ValF1",
+            "lr": "LR",
         }
         parts = []
         for key, label in _fmt.items():
@@ -95,11 +95,11 @@ class TrainingLogger:
         parts = []
         _fmt = {
             "loss/train": "TrainLoss",
-            "loss/val":   "ValLoss",
-            "acc/train":  "TrainAcc",
-            "acc/val":    "ValAcc",
-            "f1/val":     "ValF1",
-            "lr":         "LR",
+            "loss/val": "ValLoss",
+            "acc/train": "TrainAcc",
+            "acc/val": "ValAcc",
+            "f1/val": "ValF1",
+            "lr": "LR",
         }
         for key, label in _fmt.items():
             if key in metrics:
@@ -186,8 +186,8 @@ class CheckpointManager:
     ) -> dict:
         import time
         ckpt: Dict[str, Any] = {
-            "epoch":              epoch,
-            "model_state_dict":   model.state_dict(),
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             **metrics,

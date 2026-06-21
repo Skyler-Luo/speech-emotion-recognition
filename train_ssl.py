@@ -28,13 +28,13 @@ class SSLEmotionDataset(torch.utils.data.Dataset):
     def __init__(self, dataset_dir: str, target_sr: int = SSL_SR,
                  max_sec: float = 3.0, training: bool = True):
         self.target_sr = target_sr
-        self.max_len   = int(max_sec * target_sr)
-        self.training  = training
+        self.max_len = int(max_sec * target_sr)
+        self.training = training
         self._resamplers = {}
 
         file_list, labels, _ = collect_wav_files(dataset_dir)
         self.file_list = file_list
-        self.labels    = np.array(labels)
+        self.labels = np.array(labels)
 
     def __len__(self):
         return len(self.file_list)
@@ -96,9 +96,9 @@ def _evaluate(model, loader, criterion, device, logger, desc='评估'):
             all_preds.extend(logits.argmax(1).cpu().numpy())
 
     all_targets = np.array(all_targets)
-    all_preds   = np.array(all_preds)
-    acc     = metrics.accuracy_score(all_targets, all_preds)
-    f1      = metrics.f1_score(all_targets, all_preds, average='macro')
+    all_preds = np.array(all_preds)
+    acc = metrics.accuracy_score(all_targets, all_preds)
+    f1 = metrics.f1_score(all_targets, all_preds, average='macro')
     avg_loss = float(np.mean(losses))
 
     logger.log(f"  验证 → 准确率: {acc*100:.2f}%  宏F1: {f1*100:.2f}%  Loss: {avg_loss:.4f}")
@@ -122,14 +122,14 @@ def _train(model, train_loader, val_loader, args, device,
                    if 'encoder' not in n and p.requires_grad]
     optimizer = torch.optim.AdamW([
         {'params': encoder_params, 'lr': args.lr_encoder},
-        {'params': head_params,    'lr': args.lr_head},
+        {'params': head_params, 'lr': args.lr_head},
     ], weight_decay=args.weight_decay)
 
     total_steps = args.epochs * len(train_loader)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=[args.lr_encoder * args.onecycle_max_factor,
-                args.lr_head    * args.onecycle_max_factor],
+                args.lr_head * args.onecycle_max_factor],
         total_steps=total_steps,
         pct_start=0.30,
         anneal_strategy='cos',
@@ -172,12 +172,12 @@ def _train(model, train_loader, val_loader, args, device,
             if ema:
                 ema.update()
             total_loss += loss.item()
-            n_correct  += (logits.argmax(1) == y).sum().item()
-            n_total    += y.size(0)
+            n_correct += (logits.argmax(1) == y).sum().item()
+            n_total += y.size(0)
 
-        train_acc  = n_correct / n_total if n_total else 0
+        train_acc = n_correct / n_total if n_total else 0
         train_loss = total_loss / len(train_loader)
-        cur_lr     = scheduler.get_last_lr()[0]
+        cur_lr = scheduler.get_last_lr()[0]
 
         if ema:
             ema.apply_shadow()
@@ -191,11 +191,11 @@ def _train(model, train_loader, val_loader, args, device,
 
         epoch_metrics = {
             'loss/train': train_loss,
-            'loss/val':   val_loss,
-            'acc/train':  train_acc,
-            'acc/val':    val_acc,
-            'f1/val':     val_f1,
-            'lr':         cur_lr,
+            'loss/val': val_loss,
+            'acc/train': train_acc,
+            'acc/val': val_acc,
+            'f1/val': val_f1,
+            'lr': cur_lr,
         }
         logger.log_epoch(epoch, epoch_metrics)
 
@@ -289,7 +289,7 @@ def train(args):
     ).to(device)
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total_p   = sum(p.numel() for p in model.parameters())
+    total_p = sum(p.numel() for p in model.parameters())
     logger.log(f"参数: 可训练 {trainable:,} / 总计 {total_p:,}")
 
     best_f1 = _train(model, train_loader, val_loader, args, device, run_dir, logger)

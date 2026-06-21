@@ -131,9 +131,9 @@ def _quick_eval(model, loader, criterion, device, logger):
             all_preds.append(logits.argmax(1).cpu().numpy())
 
     targets = np.concatenate(all_targets)
-    preds   = np.concatenate(all_preds)
-    acc  = metrics.accuracy_score(targets, preds)
-    f1   = metrics.f1_score(targets, preds, average='macro')
+    preds = np.concatenate(all_preds)
+    acc = metrics.accuracy_score(targets, preds)
+    f1 = metrics.f1_score(targets, preds, average='macro')
     loss = float(np.mean(losses))
 
     logger.log(f"  验证 → 准确率: {acc*100:.2f}%  宏F1: {f1*100:.2f}%  Loss: {loss:.4f}")
@@ -275,7 +275,7 @@ def train(args):
             loss = criterion(logits, y)
 
             train_correct += (logits.argmax(1) == y).sum().item()
-            train_total   += y.size(0)
+            train_total += y.size(0)
             train_loss_list.append(loss.detach().cpu().item())
 
             optimizer.zero_grad(set_to_none=True)
@@ -285,7 +285,7 @@ def train(args):
             if ema:
                 ema.update()
 
-        train_acc  = train_correct / train_total if train_total else 0
+        train_acc = train_correct / train_total if train_total else 0
         train_loss = float(np.mean(train_loss_list))
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
@@ -302,11 +302,11 @@ def train(args):
 
         epoch_metrics = {
             'loss/train': train_loss,
-            'loss/val':   val_loss,
-            'acc/train':  train_acc,
-            'acc/val':    val_acc,
-            'f1/val':     val_f1,
-            'lr':         current_lr,
+            'loss/val': val_loss,
+            'acc/train': train_acc,
+            'acc/val': val_acc,
+            'f1/val': val_f1,
+            'lr': current_lr,
         }
         logger.log_epoch(epoch + 1, epoch_metrics)
         logger.log(f"  耗时: {time.time()-t0:.1f}s")

@@ -1,4 +1,3 @@
-# utils/config.py
 # 全局常量：情感标签、默认音频参数
 
 from typing import Dict

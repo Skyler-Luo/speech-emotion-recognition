@@ -40,14 +40,14 @@ def compute_spectral_features(audio: torch.Tensor,
     freqs = torch.linspace(0, sample_rate / 2, steps=freq_bins,
                            device=audio.device).unsqueeze(1)  # [freq_bins, 1]
 
-    power = magnitude.sum(dim=0, keepdim=False) + 1e-10   # [time_frames]
-    centroid = (freqs * magnitude).sum(dim=0) / power      # [time_frames]
+    power = magnitude.sum(dim=0, keepdim=False) + 1e-10  # [time_frames]
+    centroid = (freqs * magnitude).sum(dim=0) / power  # [time_frames]
 
     deviation = (freqs - centroid.unsqueeze(0)).abs() ** p
     bandwidth = (magnitude * deviation).sum(dim=0) / power
-    bandwidth = bandwidth ** (1.0 / p)                      # [time_frames]
+    bandwidth = bandwidth ** (1.0 / p)  # [time_frames]
 
-    return centroid.unsqueeze(0), bandwidth.unsqueeze(0)    # each [1, time_frames]
+    return centroid.unsqueeze(0), bandwidth.unsqueeze(0)  # each [1, time_frames]
 
 
 def extract_baseline_feature(audio: torch.Tensor,
@@ -82,10 +82,10 @@ def extract_baseline_feature(audio: torch.Tensor,
         )
     mfcc_transform = mfcc_transform.to(audio.device)
 
-    mfcc = mfcc_transform(audio).squeeze(0)            # [n_mfcc, T]
+    mfcc = mfcc_transform(audio).squeeze(0)  # [n_mfcc, T]
     centroid, bandwidth = compute_spectral_features(
         audio, sample_rate, n_fft, win_length, hop_length, p
-    )                                                   # each [1, T']
+    )  # each [1, T']
 
     # align time dim (MFCC and spectral frames may differ by 1)
     min_t = min(mfcc.shape[1], centroid.shape[1])
@@ -156,16 +156,16 @@ class SERBaselineModel(nn.Module):
         Returns:
             (logits [B, num_classes], embed [B, 2*lstm_hidden])
         """
-        x = x.unsqueeze(1)                                   # [B, 1, T, F]
-        x = self.cnn(x)                                      # [B, C, T', F']
+        x = x.unsqueeze(1)  # [B, 1, T, F]
+        x = self.cnn(x)  # [B, C, T', F']
         B, C, T, Fv = x.size()
         x = x.permute(0, 2, 1, 3).contiguous().view(B, T, C * Fv)
 
-        x, _ = self.bilstm(x)                                # [B, T, 2H]
-        attn = torch.softmax(self.attention(x), dim=1)       # [B, T, 1]
-        embed = (attn * x).sum(dim=1)                        # [B, 2H]
+        x, _ = self.bilstm(x)  # [B, T, 2H]
+        attn = torch.softmax(self.attention(x), dim=1)  # [B, T, 1]
+        embed = (attn * x).sum(dim=1)  # [B, 2H]
 
-        logits = self.classifier(embed)                      # [B, num_classes]
+        logits = self.classifier(embed)  # [B, num_classes]
         return logits, embed
 
 
