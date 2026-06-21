@@ -1,6 +1,8 @@
-"""CNN-BiLSTM baseline model for SER.
+"""CNNBiLSTM: CNN + BiLSTM + Attention model for SER.
+
 Features: MFCC + spectral centroid + spectral bandwidth -> [T, feat_dim]
 """
+
 from typing import Optional
 
 import torch
@@ -41,11 +43,11 @@ def compute_spectral_features(audio: torch.Tensor,
                            device=audio.device).unsqueeze(1)  # [freq_bins, 1]
 
     power = magnitude.sum(dim=0, keepdim=False) + 1e-10  # [time_frames]
-    centroid = (freqs * magnitude).sum(dim=0) / power  # [time_frames]
+    centroid = (freqs * magnitude).sum(dim=0) / power    # [time_frames]
 
     deviation = (freqs - centroid.unsqueeze(0)).abs() ** p
     bandwidth = (magnitude * deviation).sum(dim=0) / power
-    bandwidth = bandwidth ** (1.0 / p)  # [time_frames]
+    bandwidth = bandwidth ** (1.0 / p)                   # [time_frames]
 
     return centroid.unsqueeze(0), bandwidth.unsqueeze(0)  # each [1, time_frames]
 
@@ -59,7 +61,7 @@ def extract_baseline_feature(audio: torch.Tensor,
                               max_len: int = 300,
                               p: int = 2,
                               mfcc_transform: Optional[T.MFCC] = None) -> torch.Tensor:
-    """Extract baseline features: MFCC(n_mfcc) + centroid(1) + bandwidth(1) -> [T, n_mfcc+2].
+    """Extract features: MFCC(n_mfcc) + centroid(1) + bandwidth(1) -> [T, n_mfcc+2].
 
     Args:
         audio:          waveform [1, T], resampled to sample_rate
@@ -94,8 +96,9 @@ def extract_baseline_feature(audio: torch.Tensor,
                          bandwidth[:, :min_t]], dim=0)  # [n_mfcc+2, T]
 
     # Z-score normalization
-    feature = (feature - feature.mean(dim=1, keepdim=True)) / \
-              (feature.std(dim=1, keepdim=True) + 1e-6)
+    feature = (feature - feature.mean(dim=1, keepdim=True)) / (
+        feature.std(dim=1, keepdim=True) + 1e-6
+    )
 
     # pad or truncate to fixed length
     t = feature.shape[1]
@@ -107,8 +110,8 @@ def extract_baseline_feature(audio: torch.Tensor,
     return feature.transpose(0, 1)  # [max_len, n_mfcc+2]
 
 
-class SERBaselineModel(nn.Module):
-    """CNN + BiLSTM + Attention baseline model for SER.
+class CNNBiLSTM(nn.Module):
+    """CNN + BiLSTM + Attention model for SER.
 
     Input:  [B, T, feat_dim]   (T=max_len, feat_dim=n_mfcc+2)
     Output: (logits [B, num_classes], embed [B, 2*lstm_hidden])
@@ -156,16 +159,16 @@ class SERBaselineModel(nn.Module):
         Returns:
             (logits [B, num_classes], embed [B, 2*lstm_hidden])
         """
-        x = x.unsqueeze(1)  # [B, 1, T, F]
-        x = self.cnn(x)  # [B, C, T', F']
+        x = x.unsqueeze(1)                                         # [B, 1, T, F]
+        x = self.cnn(x)                                            # [B, C, T', F']
         B, C, T, Fv = x.size()
         x = x.permute(0, 2, 1, 3).contiguous().view(B, T, C * Fv)
 
-        x, _ = self.bilstm(x)  # [B, T, 2H]
-        attn = torch.softmax(self.attention(x), dim=1)  # [B, T, 1]
-        embed = (attn * x).sum(dim=1)  # [B, 2H]
+        x, _ = self.bilstm(x)                                      # [B, T, 2H]
+        attn = torch.softmax(self.attention(x), dim=1)             # [B, T, 1]
+        embed = (attn * x).sum(dim=1)                              # [B, 2H]
 
-        logits = self.classifier(embed)  # [B, num_classes]
+        logits = self.classifier(embed)                            # [B, num_classes]
         return logits, embed
 
 
@@ -174,9 +177,9 @@ def get_model(num_classes: int = 5,
               cnn_out_channels: int = 64,
               lstm_hidden: int = 128,
               lstm_layers: int = 2,
-              dropout: float = 0.5) -> SERBaselineModel:
-    """Return a SERBaselineModel instance. input_dim = n_mfcc + 2."""
-    return SERBaselineModel(
+              dropout: float = 0.5) -> CNNBiLSTM:
+    """Return a CNNBiLSTM instance. input_dim = n_mfcc + 2."""
+    return CNNBiLSTM(
         input_dim=n_mfcc + 2,
         num_classes=num_classes,
         cnn_out_channels=cnn_out_channels,
