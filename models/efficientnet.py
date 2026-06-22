@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio.transforms as T
 
-os.environ.setdefault('TORCH_HOME', 'weights')
+os.environ.setdefault('TORCH_HOME', 'weights/torch')
 
 from torchvision.models import (
     efficientnet_b0, EfficientNet_B0_Weights,

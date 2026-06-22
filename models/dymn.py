@@ -267,7 +267,7 @@ class DY_Block(nn.Module):
 
 
 model_url = "https://github.com/fschmid56/EfficientAT/releases/download/v0.0.1/"
-model_dir = "weights"
+model_dir = "weights/dymn"
 
 pretrained_models = {
     "dymn04_im": urllib.parse.urljoin(model_url, "dymn04_im.pt"),
