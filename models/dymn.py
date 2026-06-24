@@ -4,7 +4,7 @@ Reference: https://github.com/fschmid56/EfficientAT
 """
 import math
 from functools import partial
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 import urllib.parse
 
 import numpy as np

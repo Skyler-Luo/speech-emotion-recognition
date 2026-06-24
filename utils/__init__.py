@@ -15,5 +15,5 @@ from utils.model_utils import (
     evaluate_per_class,
     run_inference,
 )
-from utils.utils import NAME_TO_WIDTH, count_parameters, worker_init_fn
+from utils.utils import NAME_TO_WIDTH, worker_init_fn
 from utils.logger import TrainingLogger, CheckpointManager

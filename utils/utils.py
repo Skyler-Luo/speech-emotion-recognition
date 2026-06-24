@@ -43,12 +43,6 @@ def NAME_TO_WIDTH(name: str) -> float:
     print(f"警告: NAME_TO_WIDTH 无法识别模型名称 '{name}'，返回默认值 1.0")
     return 1.0
 
-
-def count_parameters(model) -> int:
-    """返回模型可训练参数数量"""
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
 def worker_init_fn(worker_id: int):
     """为每个 DataLoader worker 设置独立的随机种子。"""
     seed_seq = np.random.SeedSequence([torch.initial_seed(), worker_id])

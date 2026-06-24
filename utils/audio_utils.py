@@ -3,12 +3,10 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
-import torchaudio
-import torchaudio.transforms as T
+import librosa
 
 from utils.config import (
     DEFAULT_SR, DEFAULT_MAX_LENGTH,
-    DEFAULT_N_MELS, DEFAULT_N_FFT, DEFAULT_HOP_LENGTH, DEFAULT_F_MIN,
 )
 
 
@@ -26,11 +24,10 @@ def resample(waveform: torch.Tensor, orig_sr: int, target_sr: int,
     """重采样波形"""
     if orig_sr == target_sr:
         return waveform
-    if cache is not None:
-        resampler = cache.setdefault((orig_sr, target_sr), T.Resample(orig_sr, target_sr))
-    else:
-        resampler = T.Resample(orig_sr, target_sr)
-    return resampler(waveform)
+    device = waveform.device
+    y = waveform.cpu().numpy()
+    y_res = librosa.resample(y, orig_sr=orig_sr, target_sr=target_sr)
+    return torch.from_numpy(y_res).to(device)
 
 
 def pad_or_trim(waveform: torch.Tensor, max_length: int,
@@ -95,12 +92,12 @@ def load_and_preprocess(file_path: str,
                         ) -> Tuple[torch.Tensor, bool]:
     """从文件加载并预处理音频。失败时返回 (零张量, False)。"""
     try:
-        wav, sr = torchaudio.load(file_path)
-        wav = preprocess_waveform(wav, sr, target_sr, max_length,
-                                  normalize=normalize,
-                                  center_crop=center_crop,
-                                  random_offset=random_offset,
-                                  resampler_cache=resampler_cache)
+        # 使用 librosa 加载，直接在加载时实现重采样和转单声道
+        y, sr = librosa.load(file_path, sr=target_sr, mono=True)
+        wav = torch.from_numpy(y).unsqueeze(0)  # Shape [1, T]
+        wav = pad_or_trim(wav, max_length, center=center_crop, random_offset=random_offset)
+        if normalize:
+            wav = normalize_waveform(wav)
         return wav, True
     except Exception as e:
         print(f"[audio_utils] 加载失败 {file_path}: {e}")

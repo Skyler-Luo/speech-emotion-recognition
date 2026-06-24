@@ -1,4 +1,3 @@
-import math
 import os
 import random
 import time
@@ -6,9 +5,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from sklearn import metrics
-from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import argparse

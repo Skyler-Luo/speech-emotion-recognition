@@ -1,6 +1,8 @@
 import os
 from collections import Counter
 from typing import Dict, List, Literal, Optional, Tuple, Union, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
 
 import numpy as np
 import torch
@@ -51,6 +53,7 @@ class EmotionDataset(Dataset):
         normalize: 是否对波形归一化
         random_offset: 过长时随机起点截取（训练集用 True）
         preload: 是否将所有数据预加载到CPU内存中
+        cache_features: 是否缓存已计算的特征（按需模式优化）
         show_progress: 是否显示预加载进度条
         
         # Spectrogram 模式参数
@@ -75,7 +78,9 @@ class EmotionDataset(Dataset):
                  normalize: bool = True,
                  random_offset: bool = False,
                  preload: bool = False,
+                 cache_features: bool = True,  # 按需模式下启用特征缓存
                  show_progress: bool = True,
+                 num_workers: int = 0,  # 预加载时使用的进程数，0表示自动检测
                  # Spectrogram 模式参数
                  feature_type: Literal['mel_spectrogram', 'mfcc', 'multi'] = 'mel_spectrogram',
                  n_mels: int = DEFAULT_N_MELS,
@@ -95,7 +100,11 @@ class EmotionDataset(Dataset):
         self.normalize = normalize
         self.random_offset = random_offset
         self.preload = preload
+        self.cache_features = cache_features and not preload  # 只在按需模式下缓存
+        # 使用线程池数量：I/O密集型任务，线程更合适
+        self.num_workers = num_workers if num_workers > 0 else min(8, (multiprocessing.cpu_count() or 1) + 4)
         self._resamplers: Dict[Tuple[int, int], T.Resample] = {}
+        self._feature_cache: Dict[int, torch.Tensor] = {}  # 特征缓存
 
         # Spectrogram 模式
         self.feature_type = feature_type
@@ -145,57 +154,139 @@ class EmotionDataset(Dataset):
 
     def _print_stats(self):
         counts = Counter(self.emotion_list)
-        mode_str = "预加载模式" if self.preload else "按需加载模式"
+        if self.preload:
+            mode_str = "预加载模式"
+        else:
+            cache_str = "+特征缓存" if self.cache_features else ""
+            mode_str = f"按需加载模式{cache_str}"
         print(f"[EmotionDataset] {len(self.file_list)} 个文件 | "
               f"模式: {self.mode} | {mode_str} | 目录: {self.dataset_dir}")
         for emotion, n in sorted(counts.items()):
             print(f"  {emotion}: {n}")
     
     def _preload_all_data(self, show_progress: bool = True):
-        """预加载所有数据到内存（CPU内存）中。"""
+        """预加载所有数据到内存（CPU内存）中，使用线程池加速。
+        
+        使用线程池而非多进程，原因：
+        1. I/O密集型任务（读取音频文件），线程池更高效
+        2. 避免 Linux/Windows 服务器上 PyTorch + multiprocessing 的兼容性与卡死问题
+        3. 无需序列化数据，更稳定
+        """
         print(f"\n[EmotionDataset] 开始预加载 {len(self.file_list)} 个文件到内存...")
+        print(f"[EmotionDataset] 使用 {self.num_workers} 个线程并行加载")
         
-        self.preloaded_data = []
-        iterator = tqdm(range(len(self.file_list)), desc="加载数据") if show_progress else range(len(self.file_list))
+        # 限制 PyTorch 内部线程数，防止多线程预加载时发生 CPU 资源过度竞争而卡死
+        old_threads = torch.get_num_threads()
+        torch.set_num_threads(1)
         
-        for idx in iterator:
-            # 加载波形
-            wav, ok = load_and_preprocess(
-                self.file_list[idx],
-                target_sr=self.target_sr,
-                max_length=self.max_length,
-                normalize=self.normalize,
-                center_crop=not self.random_offset,
-                random_offset=self.random_offset,
-                resampler_cache=self._resamplers,
-            )
+        try:
+            self.preloaded_data = [None] * len(self.file_list)
             
-            if not ok:
-                self.failed_indices.append(idx)
+            def load_single(idx):
+                """加载单个文件（线程安全，带超时保护）"""
+                try:
+                    wav, ok = load_and_preprocess(
+                        self.file_list[idx],
+                        target_sr=self.target_sr,
+                        max_length=self.max_length,
+                        normalize=self.normalize,
+                        center_crop=True,  # 预加载时使用中心裁剪，更稳定
+                        random_offset=False,
+                        resampler_cache=None,  # 每个线程独立
+                    )
+                    return idx, wav, ok, None
+                except Exception as e:
+                    # 捕获任何异常，避免整个加载过程卡死
+                    print(f"\n[警告] 文件 {self.file_list[idx]} 加载失败: {str(e)}")
+                    # 返回零张量作为占位
+                    dummy_wav = torch.zeros(1, self.max_length, dtype=torch.float32)
+                    return idx, dummy_wav, False, str(e)
             
-            # 根据模式处理数据（保存在CPU内存中）
-            if self.mode == 'waveform' or (self.mode == 'spectrogram' and self.return_waveform):
-                # 直接保存波形
-                data = wav
-            elif self.mode == 'cnn_bilstm':
-                # 提取 MFCC+谱特征
-                from models.cnn_bilstm import extract_baseline_feature
-                feat = extract_baseline_feature(
-                    wav,
-                    sample_rate=self.target_sr,
-                    n_mfcc=self.n_mfcc,
-                    n_fft=self.n_fft,
-                    hop_length=self.hop_length,
-                    win_length=self.win_length,
-                    max_len=self.max_frames,
-                    mfcc_transform=self.mfcc_transform,
-                )
-                data = feat
-            else:  # spectrogram 模式且不返回波形
-                # 保存波形，在 __getitem__ 时再提取特征（因为可能需要增强）
-                data = wav
+            # 使用线程池并行加载
+            if self.num_workers > 1:
+                with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                    # 提交所有任务，设置超时
+                    futures = {executor.submit(load_single, idx): idx 
+                              for idx in range(len(self.file_list))}
+                    
+                    # 收集结果，添加超时保护
+                    if show_progress:
+                        with tqdm(total=len(self.file_list), desc="加载数据") as pbar:
+                            for future in as_completed(futures, timeout=None):
+                                try:
+                                    idx, wav, ok, error = future.result(timeout=30)  # 单个文件最多30秒
+                                    if not ok:
+                                        self.failed_indices.append(idx)
+                                        if error and len(self.failed_indices) <= 5:  # 只打印前5个错误
+                                            print(f"\n[错误] 索引 {idx}: {error}")
+                                    self.preloaded_data[idx] = wav
+                                    pbar.update(1)
+                                except TimeoutError:
+                                    idx = futures[future]
+                                    print(f"\n[超时] 文件 {self.file_list[idx]} 加载超时（>30秒），跳过")
+                                    self.failed_indices.append(idx)
+                                    self.preloaded_data[idx] = torch.zeros(1, self.max_length, dtype=torch.float32)
+                                    pbar.update(1)
+                                except Exception as e:
+                                    idx = futures[future]
+                                    print(f"\n[异常] 索引 {idx} 处理失败: {str(e)}")
+                                    self.failed_indices.append(idx)
+                                    self.preloaded_data[idx] = torch.zeros(1, self.max_length, dtype=torch.float32)
+                                    pbar.update(1)
+                    else:
+                        for future in as_completed(futures, timeout=None):
+                            try:
+                                idx, wav, ok, error = future.result(timeout=30)
+                                if not ok:
+                                    self.failed_indices.append(idx)
+                                self.preloaded_data[idx] = wav
+                            except (TimeoutError, Exception) as e:
+                                idx = futures[future]
+                                self.failed_indices.append(idx)
+                                self.preloaded_data[idx] = torch.zeros(1, self.max_length, dtype=torch.float32)
+            else:
+                # 单线程模式
+                iterator = tqdm(range(len(self.file_list)), desc="加载数据") if show_progress else range(len(self.file_list))
+                for idx in iterator:
+                    idx, wav, ok, error = load_single(idx)
+                    if not ok:
+                        self.failed_indices.append(idx)
+                    self.preloaded_data[idx] = wav
+        finally:
+            torch.set_num_threads(old_threads)
+        
+        # 根据模式处理数据
+        if self.mode == 'cnn_bilstm':
+            # 需要提取 MFCC+谱特征
+            print("[EmotionDataset] 提取 MFCC 特征...")
+            from models.cnn_bilstm import extract_baseline_feature
             
-            self.preloaded_data.append(data)
+            processed_data = []
+            iterator = tqdm(range(len(self.preloaded_data)), desc="提取特征") if show_progress else range(len(self.preloaded_data))
+            
+            for idx in iterator:
+                wav = self.preloaded_data[idx]
+                try:
+                    feat = extract_baseline_feature(
+                        wav,
+                        sample_rate=self.target_sr,
+                        n_mfcc=self.n_mfcc,
+                        n_fft=self.n_fft,
+                        hop_length=self.hop_length,
+                        win_length=self.win_length,
+                        max_len=self.max_frames,
+                        mfcc_transform=self.mfcc_transform,
+                    )
+                    processed_data.append(feat)
+                except Exception as e:
+                    print(f"\n[警告] 索引 {idx} 特征提取失败: {str(e)}")
+                    # 使用零特征占位
+                    dummy_feat = torch.zeros((self.max_frames, self.n_mfcc + 2), dtype=torch.float32)
+                    processed_data.append(dummy_feat)
+                    if idx not in self.failed_indices:
+                        self.failed_indices.append(idx)
+            
+            self.preloaded_data = processed_data
         
         # 统计信息
         success_count = len(self.file_list) - len(self.failed_indices)
@@ -205,9 +296,13 @@ class EmotionDataset(Dataset):
         print(f"  成功: {success_count}/{len(self.file_list)} ({100-fail_rate:.2f}%)")
         if self.failed_indices:
             print(f"  失败: {len(self.failed_indices)} 个文件")
+            if len(self.failed_indices) <= 10:
+                print(f"  失败文件列表:")
+                for idx in self.failed_indices:
+                    print(f"    - {self.file_list[idx]}")
         
         # 计算内存占用
-        total_bytes = sum(d.element_size() * d.nelement() for d in self.preloaded_data)
+        total_bytes = sum(d.element_size() * d.nelement() for d in self.preloaded_data if d is not None)
         memory_mb = total_bytes / (1024 ** 2)
         print(f"  内存占用: {memory_mb:.2f} MB")
 
@@ -241,10 +336,14 @@ class EmotionDataset(Dataset):
 
     def extract_features(self, waveform: torch.Tensor
                          ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
-        """波形 → 频谱图特征（spectrogram 模式）。"""
+        """波形 → 频谱图特征（spectrogram 模式）。支持单条波形与批量波形特征提取。"""
         device = waveform.device
-        self.mel_transform = self.mel_transform.to(device)
-        self.mfcc_transform = self.mfcc_transform.to(device)
+        if hasattr(self, '_current_device') and self._current_device == device:
+            pass
+        else:
+            self.mel_transform = self.mel_transform.to(device)
+            self.mfcc_transform = self.mfcc_transform.to(device)
+            self._current_device = device
 
         if self.feature_type == 'mfcc':
             return self.mfcc_transform(waveform)
@@ -258,27 +357,9 @@ class EmotionDataset(Dataset):
         return torch.log(self.mel_transform(waveform) + 1e-9)
 
     def extract_features_batch(self, waveforms: torch.Tensor) -> torch.Tensor:
-        """批量特征提取（spectrogram 模式）。"""
-        return torch.cat(
-            [self.extract_features(waveforms[i:i + 1]) for i in range(waveforms.shape[0])],
-            dim=0,
-        )
+        """批量特征提取（spectrogram 模式）"""
+        return self.extract_features(waveforms)
     
-    def to(self, device: str):
-        """将预加载的数据移动到指定设备（通常不需要使用，DataLoader 会自动处理）。
-        
-        Args:
-            device: 目标设备，如 'cpu' 或 'cuda'
-        """
-        if not self.preload or self.preloaded_data is None:
-            print("[EmotionDataset] 警告: 非预加载模式，无法移动数据")
-            return self
-        
-        print(f"[EmotionDataset] 将数据移动到 {device}...")
-        self.preloaded_data = [d.to(device) for d in tqdm(self.preloaded_data, desc="移动数据")]
-        print(f"[EmotionDataset] 数据已移动到 {device}")
-        return self
-
     def __getitem__(self, idx: int):
         """根据模式返回不同格式的数据。"""
         if self.mode == 'waveform':
@@ -293,22 +374,36 @@ class EmotionDataset(Dataset):
                 feat = self.preloaded_data[idx].clone()
                 label = int(self.labels[idx])
             else:
-                # 实时提取特征
-                from models.cnn_bilstm import extract_baseline_feature
-                wav, label = self._load_waveform(idx)
-                feat = extract_baseline_feature(
-                    wav,
-                    sample_rate=self.target_sr,
-                    n_mfcc=self.n_mfcc,
-                    n_fft=self.n_fft,
-                    hop_length=self.hop_length,
-                    win_length=self.win_length,
-                    max_len=self.max_frames,
-                    mfcc_transform=self.mfcc_transform,
-                )
+                # 按需模式：先检查缓存
+                if self.cache_features and idx in self._feature_cache:
+                    feat = self._feature_cache[idx].clone()
+                    label = int(self.labels[idx])
+                else:
+                    # 实时提取特征
+                    from models.cnn_bilstm import extract_baseline_feature
+                    wav, label = self._load_waveform(idx)
+                    feat = extract_baseline_feature(
+                        wav,
+                        sample_rate=self.target_sr,
+                        n_mfcc=self.n_mfcc,
+                        n_fft=self.n_fft,
+                        hop_length=self.hop_length,
+                        win_length=self.win_length,
+                        max_len=self.max_frames,
+                        mfcc_transform=self.mfcc_transform,
+                    )
+                    # 缓存特征（训练时不缓存，避免随机性问题）
+                    if self.cache_features and not self.random_offset:
+                        self._feature_cache[idx] = feat.clone()
             return feat, label
         
         else:  # spectrogram 模式
+            # 如果启用缓存且没有数据增强，先检查缓存
+            if (self.cache_features and not self.preload and 
+                self.augmenter is None and not self.return_waveform and 
+                idx in self._feature_cache):
+                return self._feature_cache[idx].clone(), int(self.labels[idx])
+            
             waveform, label = self._load_waveform(idx)
 
             if self.return_waveform:
@@ -319,4 +414,11 @@ class EmotionDataset(Dataset):
                 waveform = self.augmenter.apply_wave_augmentations(waveform)
                 waveform = pad_or_trim(waveform, self.max_length)
 
-            return self.extract_features(waveform), label
+            features = self.extract_features(waveform)
+            
+            # 缓存特征（仅在无增强且非训练模式时）
+            if (self.cache_features and not self.preload and 
+                self.augmenter is None and not self.random_offset):
+                self._feature_cache[idx] = features.clone()
+            
+            return features, label

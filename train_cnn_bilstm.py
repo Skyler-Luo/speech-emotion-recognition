@@ -1,5 +1,4 @@
 import argparse
-import math
 import os
 import random
 import time
@@ -7,15 +6,12 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from sklearn import metrics
-from torch.optim.lr_scheduler import _LRScheduler
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from utils.config import EMOTION_LABEL_MAP, NUM_CLASSES, DEFAULT_SR
-from utils.dataset import collect_wav_files, EmotionDataset
-from utils.audio_utils import load_and_preprocess
+from utils.dataset import EmotionDataset
 from utils.utils import worker_init_fn
 from utils.training import WarmupCosineScheduler
 from utils.model_utils import EMA, evaluate_per_class, run_inference
