@@ -17,6 +17,7 @@ from utils.config import EMOTION_LABEL_MAP, NUM_CLASSES
 from utils.dataset import EmotionDataset
 from utils.augmentation import AudioAugmentation, AudioSMOTE, configure_augmentation
 from utils.utils import worker_init_fn, NAME_TO_WIDTH
+from utils.training import WarmupCosineScheduler, FocalLoss, mixup_criterion
 from utils.model_utils import (
     EMA, reshape_input, batch_extract_features,
     evaluate_per_class, run_inference, get_logits,
@@ -24,58 +25,6 @@ from utils.model_utils import (
 from utils.logger import TrainingLogger, CheckpointManager
 from models.mn import get_model as get_mobilenet
 from models.dymn import get_model as get_dymn
-
-
-class WarmupCosineScheduler(_LRScheduler):
-    def __init__(self, optimizer, warmup_epochs, max_epochs,
-                 warmup_start_lr=1e-6, eta_min=1e-6, last_epoch=-1):
-        self.warmup_epochs = warmup_epochs
-        self.max_epochs = max_epochs
-        self.warmup_start_lr = warmup_start_lr
-        self.eta_min = eta_min
-        super().__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        if self.last_epoch < self.warmup_epochs:
-            alpha = self.last_epoch / self.warmup_epochs
-            return [self.warmup_start_lr + alpha * (base_lr - self.warmup_start_lr)
-                    for base_lr in self.base_lrs]
-        progress = (self.last_epoch - self.warmup_epochs) / (
-            self.max_epochs - self.warmup_epochs)
-        cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
-        return [self.eta_min + cosine_decay * (base_lr - self.eta_min)
-                for base_lr in self.base_lrs]
-
-
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=None, gamma=2.0, reduction='mean', class_weights=None):
-        super().__init__()
-        self.gamma = gamma
-        self.reduction = reduction
-        self.class_weights = class_weights
-        self.alpha = alpha
-
-    def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets,
-                                  weight=self.class_weights, reduction='none')
-        if torch.isnan(ce_loss).any() or torch.isinf(ce_loss).any():
-            ce_loss = torch.nan_to_num(ce_loss, nan=1.0, posinf=10.0, neginf=0.0)
-        pt = torch.exp(-ce_loss.clamp(-20, 20))
-        if self.alpha is not None:
-            alpha_t = torch.clamp(self.alpha[targets], 0.05, 0.95)
-            focal = alpha_t * (1 - pt) ** self.gamma * ce_loss
-        else:
-            focal = (1 - pt) ** self.gamma * ce_loss
-        focal = torch.nan_to_num(focal, nan=1.0, posinf=10.0, neginf=0.0)
-        if self.reduction == 'mean':
-            return focal.mean()
-        elif self.reduction == 'sum':
-            return focal.sum()
-        return focal
-
-
-def mixup_criterion(criterion, pred, y_a, y_b, lam):
-    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 
 def _prepare_input(x, args, dataset):
@@ -104,7 +53,7 @@ def _quick_eval(model, loader, criterion, device, args, dataset, logger):
 
 
 def _build_model(args):
-    """根据 model_name 构建并返回模型实例（未移至 device）。"""
+    """根据 model_name 构建并返回模型实例"""
     pretrained_name = args.model_name if args.pretrained else None
 
     if args.model_name.startswith('dymn'):
@@ -177,8 +126,17 @@ def train(args):
 
     # 数据集
     need_waveform = args.augment or args.use_smote
+    
+    # 确定预加载设备
+    preload_device = 'cuda' if args.cuda and torch.cuda.is_available() else 'cpu'
+    if args.preload_data:
+        logger.log(f"使用预加载数据集模式，目标设备: {preload_device}")
+    else:
+        logger.log("使用按需加载模式")
+    
     train_dataset = EmotionDataset(
         dataset_dir=args.train_dir,
+        mode='spectrogram',
         feature_type=args.feature_type,
         max_length=args.max_length,
         n_mels=args.n_mels,
@@ -187,9 +145,13 @@ def train(args):
         random_offset=True,
         return_waveform=need_waveform,
         augmenter=augmenter if need_waveform else None,
+        preload=args.preload_data,
+        preload_device=preload_device,
+        show_progress=True,
     )
     val_dataset = EmotionDataset(
         dataset_dir=args.val_dir,
+        mode='spectrogram',
         feature_type=args.feature_type,
         max_length=args.max_length,
         n_mels=args.n_mels,
@@ -198,6 +160,9 @@ def train(args):
         random_offset=False,
         return_waveform=False,
         augmenter=None,
+        preload=args.preload_data,
+        preload_device=preload_device,
+        show_progress=True,
     )
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
@@ -206,6 +171,15 @@ def train(args):
         val_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=args.num_workers, worker_init_fn=worker_init_fn)
     logger.log(f"训练集: {len(train_dataset)}  验证集: {len(val_dataset)}")
+    
+    # 如果使用预加载，显示加载失败的文件
+    if args.preload_data:
+        failed_train = train_dataset.get_failed_files()
+        failed_val = val_dataset.get_failed_files()
+        if failed_train:
+            logger.log(f"训练集加载失败文件数: {len(failed_train)}")
+        if failed_val:
+            logger.log(f"验证集加载失败文件数: {len(failed_val)}")
 
     # SMOTE（可选）
     if args.use_smote:
@@ -438,7 +412,7 @@ if __name__ == '__main__':
         description='CNN 频谱图模型训练 (MobileNet / DyMN / EfficientNet)')
 
     # 基本
-    parser.add_argument('--experiment_name', type=str, default='EmotionClassification')
+    parser.add_argument('--experiment_name', type=str, default='CNN_SER')
     parser.add_argument('--cuda', action='store_true', default=True)
     parser.add_argument('--no_cuda', dest='cuda', action='store_false')
     parser.add_argument('--gpu_id', type=int, default=0)
@@ -504,6 +478,10 @@ if __name__ == '__main__':
     parser.add_argument('--use_smote', action='store_true', default=False)
     parser.add_argument('--smote_sampling_strategy', type=float, default=1.0)
     parser.add_argument('--smote_k_neighbors', type=int, default=5)
+    
+    # 数据预加载
+    parser.add_argument('--preload_data', action='store_true', default=False,
+                        help='将所有音频数据预加载到内存中，加速训练但占用更多内存')
 
     # 权重导出
     parser.add_argument('--export_model', type=str, default='')

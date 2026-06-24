@@ -260,5 +260,5 @@ WAV(16kHz)
 ```
 
 <div align="center">
-<sub>欢迎 ⭐ Star 与交流</sub>
+欢迎 ⭐ Star 与交流
 </div>

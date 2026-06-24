@@ -14,104 +14,13 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from utils.config import EMOTION_LABEL_MAP, NUM_CLASSES, DEFAULT_SR
-from utils.dataset import collect_wav_files
+from utils.dataset import collect_wav_files, EmotionDataset
 from utils.audio_utils import load_and_preprocess
 from utils.utils import worker_init_fn
+from utils.training import WarmupCosineScheduler
 from utils.model_utils import EMA, evaluate_per_class, run_inference
 from utils.logger import TrainingLogger, CheckpointManager
 from models.cnn_bilstm import get_model, extract_baseline_feature, CNNBiLSTM
-
-
-
-class WarmupCosineScheduler(_LRScheduler):
-    def __init__(self, optimizer, warmup_epochs, max_epochs,
-                 warmup_start_lr=1e-6, eta_min=1e-6, last_epoch=-1):
-        self.warmup_epochs = warmup_epochs
-        self.max_epochs = max_epochs
-        self.warmup_start_lr = warmup_start_lr
-        self.eta_min = eta_min
-        super().__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        if self.last_epoch < self.warmup_epochs:
-            alpha = self.last_epoch / self.warmup_epochs
-            return [self.warmup_start_lr + alpha * (base_lr - self.warmup_start_lr)
-                    for base_lr in self.base_lrs]
-        progress = (self.last_epoch - self.warmup_epochs) / (
-            self.max_epochs - self.warmup_epochs)
-        cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
-        return [self.eta_min + cosine_decay * (base_lr - self.eta_min)
-                for base_lr in self.base_lrs]
-
-
-
-class CNNBiLSTMEmotionDataset(Dataset):
-    """加载 WAV → 提取 MFCC+谱特征，返回 (feature [T, D], label)。"""
-
-    def __init__(self, dataset_dir: str,
-                 sample_rate: int = DEFAULT_SR,
-                 max_length: int = 3 * DEFAULT_SR,
-                 n_mfcc: int = 10,
-                 n_fft: int = 2048,
-                 hop_length: int = 512,
-                 win_length: int = 2048,
-                 max_frames: int = 300,
-                 normalize: bool = True,
-                 random_offset: bool = False):
-        self.sample_rate = sample_rate
-        self.max_length = max_length
-        self.n_mfcc = n_mfcc
-        self.n_fft = n_fft
-        self.hop_length = hop_length
-        self.win_length = win_length
-        self.max_frames = max_frames
-        self.normalize = normalize
-        self.random_offset = random_offset
-        self._resamplers = {}
-
-        import torchaudio.transforms as T
-        self._mfcc_transform = T.MFCC(
-            sample_rate=sample_rate,
-            n_mfcc=n_mfcc,
-            melkwargs={'n_fft': n_fft, 'hop_length': hop_length},
-        )
-
-        file_list, labels, _ = collect_wav_files(dataset_dir)
-        if not file_list:
-            raise FileNotFoundError(f"在 {dataset_dir} 下未找到任何 WAV 文件")
-        self.file_list = file_list
-        self.labels = np.array(labels)
-        print(f"[CNNBiLSTMDataset] {len(file_list)} 个文件 | {dataset_dir}")
-
-    def __len__(self):
-        return len(self.file_list)
-
-    def get_labels(self):
-        return self.labels
-
-    def __getitem__(self, idx):
-        wav, _ = load_and_preprocess(
-            self.file_list[idx],
-            target_sr=self.sample_rate,
-            max_length=self.max_length,
-            normalize=self.normalize,
-            center_crop=not self.random_offset,
-            random_offset=self.random_offset,
-            resampler_cache=self._resamplers,
-        )
-        # wav: [1, T]
-        feat = extract_baseline_feature(
-            wav,
-            sample_rate=self.sample_rate,
-            n_mfcc=self.n_mfcc,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            win_length=self.win_length,
-            max_len=self.max_frames,
-            mfcc_transform=self._mfcc_transform,
-        )  # [max_frames, n_mfcc+2]
-        return feat, int(self.labels[idx])
-
 
 
 def _get_logits(outputs):
@@ -142,7 +51,6 @@ def _quick_eval(model, loader, criterion, device, logger):
             cls_acc = metrics.accuracy_score(targets[mask], preds[mask])
             logger.log(f"    {emotion}: {cls_acc*100:.1f}% ({mask.sum()})")
     return f1, loss, acc
-
 
 
 def train(args):
@@ -177,9 +85,16 @@ def train(args):
         logger.log("使用 CPU")
 
     # 数据集
-    train_dataset = CNNBiLSTMEmotionDataset(
+    preload_device = 'cuda' if args.cuda and torch.cuda.is_available() else 'cpu'
+    if args.preload_data:
+        logger.log(f"使用预加载数据集模式，目标设备: {preload_device}")
+    else:
+        logger.log("使用按需加载模式")
+    
+    train_dataset = EmotionDataset(
         dataset_dir=args.train_dir,
-        sample_rate=args.sample_rate,
+        mode='cnn_bilstm',
+        target_sr=args.sample_rate,
         max_length=args.max_length,
         n_mfcc=args.n_mfcc,
         n_fft=args.n_fft,
@@ -188,10 +103,14 @@ def train(args):
         max_frames=args.max_frames,
         normalize=True,
         random_offset=True,
+        preload=args.preload_data,
+        preload_device=preload_device,
+        show_progress=True,
     )
-    val_dataset = CNNBiLSTMEmotionDataset(
+    val_dataset = EmotionDataset(
         dataset_dir=args.val_dir,
-        sample_rate=args.sample_rate,
+        mode='cnn_bilstm',
+        target_sr=args.sample_rate,
         max_length=args.max_length,
         n_mfcc=args.n_mfcc,
         n_fft=args.n_fft,
@@ -200,6 +119,9 @@ def train(args):
         max_frames=args.max_frames,
         normalize=True,
         random_offset=False,
+        preload=args.preload_data,
+        preload_device=preload_device,
+        show_progress=True,
     )
     train_loader = DataLoader(
         train_dataset,
@@ -210,6 +132,15 @@ def train(args):
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.num_workers, worker_init_fn=worker_init_fn)
     logger.log(f"训练集: {len(train_dataset)}  验证集: {len(val_dataset)}")
+    
+    # 如果使用预加载，显示加载失败的文件
+    if args.preload_data:
+        failed_train = train_dataset.get_failed_files()
+        failed_val = val_dataset.get_failed_files()
+        if failed_train:
+            logger.log(f"训练集加载失败文件数: {len(failed_train)}")
+        if failed_val:
+            logger.log(f"验证集加载失败文件数: {len(failed_val)}")
 
     # 模型
     model = get_model(
@@ -378,7 +309,6 @@ def train(args):
     logger.close()
 
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='CNN-BiLSTM 模型训练')
 
@@ -431,5 +361,10 @@ if __name__ == '__main__':
     parser.add_argument('--use_ema', action='store_true', default=False)
     parser.add_argument('--no_ema', dest='use_ema', action='store_false')
     parser.add_argument('--ema_decay', type=float, default=0.999)
+    
+    # 数据预加载
+    parser.add_argument('--preload_data', action='store_true', default=False,
+                        help='将所有音频数据预加载到内存中，加速训练但占用更多内存')
+    
     args = parser.parse_args()
     train(args)

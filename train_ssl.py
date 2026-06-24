@@ -11,48 +11,11 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from utils.config import EMOTION_LABEL_MAP, SSL_SR
-from utils.dataset import collect_wav_files
+from utils.dataset import collect_wav_files, EmotionDataset
 from utils.audio_utils import load_and_preprocess
 from utils.utils import worker_init_fn
 from utils.model_utils import EMA
 from utils.logger import TrainingLogger, CheckpointManager
-
-
-class SSLEmotionDataset(torch.utils.data.Dataset):
-    """从 EMOTION_LABEL_MAP 目录读取 WAV，重采样至 target_sr（默认 16kHz）。
-
-    返回 (waveform [1, T], label)，裁剪/填充到 max_sec 秒。
-    training=True 时随机截取起点，False 时居中截取。
-    """
-
-    def __init__(self, dataset_dir: str, target_sr: int = SSL_SR,
-                 max_sec: float = 3.0, training: bool = True):
-        self.target_sr = target_sr
-        self.max_len = int(max_sec * target_sr)
-        self.training = training
-        self._resamplers = {}
-
-        file_list, labels, _ = collect_wav_files(dataset_dir)
-        self.file_list = file_list
-        self.labels = np.array(labels)
-
-    def __len__(self):
-        return len(self.file_list)
-
-    def __getitem__(self, idx):
-        wav, _ = load_and_preprocess(
-            self.file_list[idx],
-            target_sr=self.target_sr,
-            max_length=self.max_len,
-            normalize=True,
-            random_offset=self.training,
-            center_crop=not self.training,
-            resampler_cache=self._resamplers,
-        )
-        return wav, int(self.labels[idx])
-
-    def get_labels(self):
-        return self.labels
 
 
 def make_ssl_collate_fn(feature_extractor, target_sr: int = 16000):
@@ -256,20 +219,43 @@ def train(args):
     feat_extractor = get_feature_extractor(args.pretrained_path)
     collate_fn = make_ssl_collate_fn(feat_extractor, target_sr=args.target_sr)
 
-    train_dataset = SSLEmotionDataset(
+    preload_device = 'cuda' if args.cuda and torch.cuda.is_available() else 'cpu'
+    if args.preload_data:
+        logger.log(f"使用预加载数据集模式，目标设备: {preload_device}")
+    else:
+        logger.log("使用按需加载模式")
+
+    train_dataset = EmotionDataset(
         dataset_dir=args.train_dir,
+        mode='waveform',
         target_sr=args.target_sr,
-        max_sec=args.max_sec,
-        training=True,
+        max_length=int(args.max_sec * args.target_sr),
+        random_offset=True,
+        preload=args.preload_data,
+        preload_device=preload_device,
+        show_progress=True,
     )
-    val_dataset = SSLEmotionDataset(
+    val_dataset = EmotionDataset(
         dataset_dir=args.val_dir,
+        mode='waveform',
         target_sr=args.target_sr,
-        max_sec=args.max_sec,
-        training=False,
+        max_length=int(args.max_sec * args.target_sr),
+        random_offset=False,
+        preload=args.preload_data,
+        preload_device=preload_device,
+        show_progress=True,
     )
     num_classes = len(EMOTION_LABEL_MAP)
     logger.log(f"训练集: {len(train_dataset)}  验证集: {len(val_dataset)}  类别数: {num_classes}")
+    
+    # 如果使用预加载，显示加载失败的文件
+    if args.preload_data:
+        failed_train = train_dataset.get_failed_files()
+        failed_val = val_dataset.get_failed_files()
+        if failed_train:
+            logger.log(f"训练集加载失败文件数: {len(failed_train)}")
+        if failed_val:
+            logger.log(f"验证集加载失败文件数: {len(failed_val)}")
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
@@ -342,6 +328,9 @@ if __name__ == '__main__':
     parser.add_argument('--use_ema', action='store_true', default=True)
     parser.add_argument('--no_ema', dest='use_ema', action='store_false')
     parser.add_argument('--ema_decay', type=float, default=0.999)
+    
+    parser.add_argument('--preload_data', action='store_true', default=False,
+                        help='将所有音频数据预加载到内存中，加速训练但占用更多内存')
 
     args = parser.parse_args()
     train(args)
