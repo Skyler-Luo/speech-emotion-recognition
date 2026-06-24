@@ -219,9 +219,8 @@ def train(args):
     feat_extractor = get_feature_extractor(args.pretrained_path)
     collate_fn = make_ssl_collate_fn(feat_extractor, target_sr=args.target_sr)
 
-    preload_device = 'cuda' if args.cuda and torch.cuda.is_available() else 'cpu'
     if args.preload_data:
-        logger.log(f"使用预加载数据集模式，目标设备: {preload_device}")
+        logger.log("使用预加载数据集模式（数据存储在内存中）")
     else:
         logger.log("使用按需加载模式")
 
@@ -232,7 +231,6 @@ def train(args):
         max_length=int(args.max_sec * args.target_sr),
         random_offset=True,
         preload=args.preload_data,
-        preload_device=preload_device,
         show_progress=True,
     )
     val_dataset = EmotionDataset(
@@ -242,7 +240,6 @@ def train(args):
         max_length=int(args.max_sec * args.target_sr),
         random_offset=False,
         preload=args.preload_data,
-        preload_device=preload_device,
         show_progress=True,
     )
     num_classes = len(EMOTION_LABEL_MAP)
@@ -260,11 +257,13 @@ def train(args):
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, drop_last=True,
-        collate_fn=collate_fn, worker_init_fn=worker_init_fn)
+        collate_fn=collate_fn, worker_init_fn=worker_init_fn,
+        pin_memory=True if args.cuda else False)
     val_loader = DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=args.num_workers,
-        collate_fn=collate_fn, worker_init_fn=worker_init_fn)
+        collate_fn=collate_fn, worker_init_fn=worker_init_fn,
+        pin_memory=True if args.cuda else False)
 
     model = get_model(
         num_classes=num_classes,

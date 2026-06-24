@@ -50,8 +50,7 @@ class EmotionDataset(Dataset):
         max_length: 最大采样点数
         normalize: 是否对波形归一化
         random_offset: 过长时随机起点截取（训练集用 True）
-        preload: 是否将所有数据预加载到内存中
-        preload_device: 预加载到的设备
+        preload: 是否将所有数据预加载到CPU内存中
         show_progress: 是否显示预加载进度条
         
         # Spectrogram 模式参数
@@ -76,7 +75,6 @@ class EmotionDataset(Dataset):
                  normalize: bool = True,
                  random_offset: bool = False,
                  preload: bool = False,
-                 preload_device: str = 'cpu',
                  show_progress: bool = True,
                  # Spectrogram 模式参数
                  feature_type: Literal['mel_spectrogram', 'mfcc', 'multi'] = 'mel_spectrogram',
@@ -97,7 +95,6 @@ class EmotionDataset(Dataset):
         self.normalize = normalize
         self.random_offset = random_offset
         self.preload = preload
-        self.preload_device = preload_device
         self._resamplers: Dict[Tuple[int, int], T.Resample] = {}
 
         # Spectrogram 模式
@@ -155,8 +152,8 @@ class EmotionDataset(Dataset):
             print(f"  {emotion}: {n}")
     
     def _preload_all_data(self, show_progress: bool = True):
-        """预加载所有数据到内存中。"""
-        print(f"\n[EmotionDataset] 开始预加载 {len(self.file_list)} 个文件到 {self.preload_device}...")
+        """预加载所有数据到内存（CPU内存）中。"""
+        print(f"\n[EmotionDataset] 开始预加载 {len(self.file_list)} 个文件到内存...")
         
         self.preloaded_data = []
         iterator = tqdm(range(len(self.file_list)), desc="加载数据") if show_progress else range(len(self.file_list))
@@ -176,10 +173,10 @@ class EmotionDataset(Dataset):
             if not ok:
                 self.failed_indices.append(idx)
             
-            # 根据模式处理数据
+            # 根据模式处理数据（保存在CPU内存中）
             if self.mode == 'waveform' or (self.mode == 'spectrogram' and self.return_waveform):
                 # 直接保存波形
-                data = wav.to(self.preload_device)
+                data = wav
             elif self.mode == 'cnn_bilstm':
                 # 提取 MFCC+谱特征
                 from models.cnn_bilstm import extract_baseline_feature
@@ -193,10 +190,10 @@ class EmotionDataset(Dataset):
                     max_len=self.max_frames,
                     mfcc_transform=self.mfcc_transform,
                 )
-                data = feat.to(self.preload_device)
+                data = feat
             else:  # spectrogram 模式且不返回波形
                 # 保存波形，在 __getitem__ 时再提取特征（因为可能需要增强）
-                data = wav.to(self.preload_device)
+                data = wav
             
             self.preloaded_data.append(data)
         
@@ -268,14 +265,17 @@ class EmotionDataset(Dataset):
         )
     
     def to(self, device: str):
-        """将预加载的数据移动到另一个设备。"""
+        """将预加载的数据移动到指定设备（通常不需要使用，DataLoader 会自动处理）。
+        
+        Args:
+            device: 目标设备，如 'cpu' 或 'cuda'
+        """
         if not self.preload or self.preloaded_data is None:
             print("[EmotionDataset] 警告: 非预加载模式，无法移动数据")
             return self
         
-        print(f"[EmotionDataset] 将数据从 {self.preload_device} 移动到 {device}...")
+        print(f"[EmotionDataset] 将数据移动到 {device}...")
         self.preloaded_data = [d.to(device) for d in tqdm(self.preloaded_data, desc="移动数据")]
-        self.preload_device = device
         print(f"[EmotionDataset] 数据已移动到 {device}")
         return self
 
