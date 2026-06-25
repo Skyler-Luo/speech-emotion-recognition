@@ -17,18 +17,22 @@ from utils.model_utils import EMA
 from utils.logger import TrainingLogger, CheckpointManager
 
 
-def make_ssl_collate_fn(feature_extractor, target_sr: int = 16000):
+class SSLCollateFn:
     """构建 HuBERT / Wav2Vec2 专用的 DataLoader collate_fn。
 
     Dataset.__getitem__ 返回 (waveform [1, T], label)。
     输出：(input_values [B, T], attention_mask [B, T], labels [B])
     """
-    def collate_fn(batch):
+    def __init__(self, feature_extractor, target_sr: int = 16000):
+        self.feature_extractor = feature_extractor
+        self.target_sr = target_sr
+
+    def __call__(self, batch):
         waveforms, labels = zip(*batch)
         raw = [w.squeeze(0).numpy() for w in waveforms]
-        encoded = feature_extractor(
+        encoded = self.feature_extractor(
             raw,
-            sampling_rate=target_sr,
+            sampling_rate=self.target_sr,
             padding=True,
             return_tensors='pt',
             return_attention_mask=True,
@@ -38,7 +42,6 @@ def make_ssl_collate_fn(feature_extractor, target_sr: int = 16000):
             encoded.attention_mask,
             torch.tensor(labels, dtype=torch.long),
         )
-    return collate_fn
 
 
 def _evaluate(model, loader, criterion, device, logger, desc='评估'):
@@ -216,7 +219,7 @@ def train(args):
         raise ValueError(f"未知模型: {args.model}，支持 'hubert' 或 'wav2vec2'")
 
     feat_extractor = get_feature_extractor(args.pretrained_path)
-    collate_fn = make_ssl_collate_fn(feat_extractor, target_sr=args.target_sr)
+    collate_fn = SSLCollateFn(feat_extractor, target_sr=args.target_sr)
 
     if args.preload_data:
         logger.log("使用预加载数据集模式（数据存储在内存中）")
