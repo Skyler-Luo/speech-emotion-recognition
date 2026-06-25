@@ -145,6 +145,7 @@ pip install -r requirements.txt
 
 * 默认支持的情感标签：`anger`（愤怒）、`fear`（恐惧）、`happy`（高兴）、`neutral`（中性）、`sad`（悲伤）。
 * 支持任意文件名的 `.wav` 格式音频。
+* **数据集下载**：[Google Drive](https://drive.google.com/file/d/1h15twUcuNWL_zXcVRUhdUnFSSAra4P99/view?usp=drive_link)
 
 ### 3. 选择路线开始训练
 
